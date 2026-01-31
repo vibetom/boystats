@@ -1,15 +1,27 @@
 const RIOT_API_KEY = process.env.RIOT_API_KEY;
 const AMERICAS_BASE = 'https://americas.api.riotgames.com';
 
-async function riotFetch(url) {
-  const response = await fetch(url, {
-    headers: { 'X-Riot-Token': RIOT_API_KEY },
-  });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Riot API error ${response.status}: ${error}`);
+async function riotFetch(url, retries = 3) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const response = await fetch(url, {
+      headers: { 'X-Riot-Token': RIOT_API_KEY },
+    });
+
+    // Handle rate limiting
+    if (response.status === 429) {
+      const retryAfter = parseInt(response.headers.get('Retry-After') || '2');
+      console.log(`Rate limited, waiting ${retryAfter}s...`);
+      await new Promise(r => setTimeout(r, retryAfter * 1000));
+      continue;
+    }
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Riot API error ${response.status}: ${error}`);
+    }
+    return response.json();
   }
-  return response.json();
+  throw new Error('Max retries exceeded due to rate limiting');
 }
 
 async function getMatchDetails(matchId) {
@@ -17,16 +29,16 @@ async function getMatchDetails(matchId) {
   return riotFetch(url);
 }
 
-// Helper to fetch with concurrency limit
-async function fetchWithConcurrency(items, fetchFn, concurrency = 5) {
+// Helper to fetch with concurrency limit - reduced to 3 for rate limiting
+async function fetchWithConcurrency(items, fetchFn, concurrency = 3) {
   const results = [];
   for (let i = 0; i < items.length; i += concurrency) {
     const batch = items.slice(i, i + concurrency);
     const batchResults = await Promise.allSettled(batch.map(fetchFn));
     results.push(...batchResults);
-    // Small delay between mini-batches to respect rate limits
+    // Longer delay between mini-batches to respect rate limits
     if (i + concurrency < items.length) {
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 150));
     }
   }
   return results;
@@ -62,13 +74,14 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'players map is required' });
     }
 
-    // Reduce batch size to 15 to stay well within timeout
-    const batchIds = matchIds.slice(0, 15);
+    // Reduce batch size to 10 to respect rate limits
+    const batchIds = matchIds.slice(0, 10);
     const puuids = Object.values(players);
 
     const matches = [];
     const errors = [];
     let skippedNoboys = 0;
+    let rateLimitHits = 0;
     let debugInfo = null;
 
     // Fetch with limited concurrency (5 at a time) to avoid rate limits
@@ -120,7 +133,11 @@ export default async function handler(req, res) {
           });
         }
       } else {
-        errors.push(`${batchIds[i]}: ${result.reason.message}`);
+        const errMsg = result.reason.message;
+        errors.push(`${batchIds[i]}: ${errMsg}`);
+        if (errMsg.includes('429') || errMsg.includes('rate limit')) {
+          rateLimitHits++;
+        }
       }
     }
 
@@ -128,6 +145,7 @@ export default async function handler(req, res) {
       matches,
       processed: batchIds.length,
       skippedNoboys,
+      rateLimitHits,
       expectedPuuids: puuids.length,
       debugInfo: debugInfo || undefined,
       errors: errors.length > 0 ? errors : undefined,

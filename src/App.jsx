@@ -690,8 +690,8 @@ export default function BoyStats() {
         setLoadingSubMessage('Now fetching match details...');
 
         // Phase 2: Fetch match details in batches
-        // Smaller batches (15) with rate limiting to avoid Vercel timeout
-        const BATCH_SIZE = 15;
+        // Smaller batches (10) with rate limiting to avoid Riot API limits
+        const BATCH_SIZE = 10;
         const allMatches = [];
         let processed = 0;
         let failedBatches = 0;
@@ -729,6 +729,7 @@ export default function BoyStats() {
               processed: detailsData.processed,
               matchesFound: detailsData.matches?.length || 0,
               skippedNoboys: detailsData.skippedNoboys || 0,
+              rateLimitHits: detailsData.rateLimitHits || 0,
               totalLoadedSoFar: allMatches.length + (detailsData.matches?.length || 0),
             });
 
@@ -757,9 +758,9 @@ export default function BoyStats() {
             // Continue with next batch on error
           }
 
-          // Delay between batches to respect rate limits
+          // Longer delay between batches to respect Riot API rate limits
           if (i + BATCH_SIZE < allMatchIds.length) {
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 500));
           }
         }
 
