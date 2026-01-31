@@ -586,18 +586,31 @@ function AskAI({ stats, matches }) {
 // LOADING COMPONENT
 // ============================================================================
 
-function LoadingScreen({ message }) {
+function LoadingScreen({ message, progress, subMessage }) {
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-      <div className="text-center">
+      <div className="text-center max-w-md px-4">
         <div className="text-6xl mb-4 animate-bounce">🎮</div>
         <h1 className="text-3xl font-black text-amber-400 mb-2">BOYSTATS</h1>
-        <p className="text-slate-400">{message}</p>
-        <div className="mt-4 flex justify-center gap-1">
-          {[0, 1, 2].map(i => (
-            <div key={i} className="w-3 h-3 bg-amber-400 rounded-full animate-pulse" style={{ animationDelay: `${i * 0.2}s` }} />
-          ))}
-        </div>
+        <p className="text-slate-400 mb-2">{message}</p>
+        {subMessage && <p className="text-slate-500 text-sm mb-4">{subMessage}</p>}
+        {progress !== undefined && progress > 0 && (
+          <div className="w-full bg-slate-800 rounded-full h-3 mb-2 overflow-hidden">
+            <div
+              className="bg-amber-500 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${Math.min(progress, 100)}%` }}
+            />
+          </div>
+        )}
+        {progress !== undefined && progress > 0 ? (
+          <p className="text-amber-400 font-bold">{Math.round(progress)}%</p>
+        ) : (
+          <div className="mt-4 flex justify-center gap-1">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="w-3 h-3 bg-amber-400 rounded-full animate-pulse" style={{ animationDelay: `${i * 0.2}s` }} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -612,6 +625,8 @@ export default function BoyStats() {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState('Connecting to server...');
+  const [loadingSubMessage, setLoadingSubMessage] = useState('');
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [error, setError] = useState(null);
 
   const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
@@ -621,7 +636,7 @@ export default function BoyStats() {
   const [timeFilter, setTimeFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('dashboard');
 
-  // Fetch data on mount
+  // Fetch data on mount using progressive loading
   useEffect(() => {
     async function fetchData() {
       try {
@@ -642,16 +657,82 @@ export default function BoyStats() {
         const playersData = await playersRes.json();
         setPlayers(playersData);
 
-        // Fetch matches - filter by queues (Solo, Flex, Normal, ARAM) at API level
-        setLoadingMessage('Fetching match history (this may take a while)...');
-        const matchesRes = await fetch(`${API_BASE}/matches?queues=420,440,400,450`);
-        const matchesData = await matchesRes.json();
-        setMatches(matchesData.matches || []);
+        // Phase 1: Fetch all match IDs (fast)
+        setLoadingMessage('Finding all matches...');
+        setLoadingSubMessage('This fetches match IDs from the Riot API');
+        setLoadingProgress(5);
 
+        const matchIdsRes = await fetch(`${API_BASE}/match-ids?queues=420,440,400,450&pages=10`);
+        const matchIdsData = await matchIdsRes.json();
+
+        if (matchIdsData.error) {
+          throw new Error(matchIdsData.error);
+        }
+
+        const allMatchIds = matchIdsData.matchIds || [];
+        const playerMap = matchIdsData.players || {};
+
+        if (allMatchIds.length === 0) {
+          setMatches([]);
+          setLoading(false);
+          return;
+        }
+
+        setLoadingProgress(15);
+        setLoadingMessage(`Found ${allMatchIds.length} matches`);
+        setLoadingSubMessage('Now fetching match details...');
+
+        // Phase 2: Fetch match details in batches
+        const BATCH_SIZE = 25;
+        const allMatches = [];
+        let processed = 0;
+
+        for (let i = 0; i < allMatchIds.length; i += BATCH_SIZE) {
+          const batchIds = allMatchIds.slice(i, i + BATCH_SIZE);
+
+          try {
+            const detailsRes = await fetch(`${API_BASE}/match-details`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                matchIds: batchIds,
+                players: playerMap,
+              }),
+            });
+
+            const detailsData = await detailsRes.json();
+
+            if (detailsData.matches) {
+              allMatches.push(...detailsData.matches);
+              // Update matches incrementally so user sees progress
+              setMatches([...allMatches].sort((a, b) => b.gameCreation - a.gameCreation));
+            }
+
+            processed += batchIds.length;
+            const progress = 15 + (processed / allMatchIds.length) * 85;
+            setLoadingProgress(progress);
+            setLoadingMessage(`Loading matches...`);
+            setLoadingSubMessage(`${allMatches.length} matches loaded (${processed}/${allMatchIds.length} processed)`);
+
+          } catch (batchErr) {
+            console.error('Batch error:', batchErr);
+            // Continue with next batch on error
+          }
+
+          // Small delay between batches to avoid overwhelming the API
+          if (i + BATCH_SIZE < allMatchIds.length) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+        }
+
+        // Final sort
+        allMatches.sort((a, b) => b.gameCreation - a.gameCreation);
+        setMatches(allMatches);
         setLoading(false);
+
       } catch (err) {
         console.error('Error fetching data:', err);
-        setError(`Failed to connect to server: ${err.message}. Make sure the backend is running on port 3001.`);
+        setError(`Failed to connect to server: ${err.message}. Make sure the backend is running.`);
         setLoading(false);
       }
     }
@@ -739,7 +820,7 @@ export default function BoyStats() {
 
   // Loading state
   if (loading) {
-    return <LoadingScreen message={loadingMessage} />;
+    return <LoadingScreen message={loadingMessage} progress={loadingProgress} subMessage={loadingSubMessage} />;
   }
 
   // Error state
