@@ -672,6 +672,13 @@ export default function BoyStats() {
         const allMatchIds = matchIdsData.matchIds || [];
         const playerMap = matchIdsData.players || {};
 
+        // Debug: verify player map has data
+        console.log('Player map received:', {
+          playerCount: Object.keys(playerMap).length,
+          players: Object.keys(playerMap),
+          samplePuuid: Object.values(playerMap)[0]?.substring(0, 20) + '...',
+        });
+
         if (allMatchIds.length === 0) {
           setMatches([]);
           setLoading(false);
@@ -714,6 +721,16 @@ export default function BoyStats() {
             if (detailsData.error) {
               console.error('Batch error from API:', detailsData.error);
               failedBatches++;
+            }
+
+            // Debug logging
+            if (detailsData.skippedNoboys > 0) {
+              console.log('Batch debug:', {
+                processed: detailsData.processed,
+                matchesFound: detailsData.matches?.length || 0,
+                skippedNoboys: detailsData.skippedNoboys,
+                expectedPuuids: detailsData.expectedPuuids,
+              });
             }
 
             if (detailsData.matches && detailsData.matches.length > 0) {

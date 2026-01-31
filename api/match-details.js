@@ -68,6 +68,7 @@ export default async function handler(req, res) {
 
     const matches = [];
     const errors = [];
+    let skippedNoboys = 0;
 
     // Fetch with limited concurrency (5 at a time) to avoid rate limits
     const results = await fetchWithConcurrency(
@@ -81,7 +82,22 @@ export default async function handler(req, res) {
 
       if (result.status === 'fulfilled') {
         const match = result.value;
+
+        // Debug: Check what PUUIDs are in the match
+        const matchPuuids = match.info.participants.map(p => p.puuid);
         const boysInMatch = match.info.participants.filter(p => puuids.includes(p.puuid));
+
+        if (boysInMatch.length === 0) {
+          skippedNoboys++;
+          // Log first skipped match for debugging
+          if (skippedNoboys === 1) {
+            console.log('First skipped match debug:', {
+              matchId: match.metadata.matchId,
+              expectedPuuids: puuids.slice(0, 2), // First 2 for brevity
+              sampleMatchPuuids: matchPuuids.slice(0, 3), // First 3 for brevity
+            });
+          }
+        }
 
         if (boysInMatch.length > 0) {
           // Annotate participants with boy info
@@ -109,6 +125,8 @@ export default async function handler(req, res) {
     res.json({
       matches,
       processed: batchIds.length,
+      skippedNoboys,
+      expectedPuuids: puuids.length,
       errors: errors.length > 0 ? errors : undefined,
       timeMs: Date.now() - startTime,
     });
