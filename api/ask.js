@@ -47,8 +47,8 @@ ${context}
 
 User's question: ${question}`;
 
-    // Try different Gemini models (current as of 2025)
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+    // Use models from user's available list
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
     let response;
     let lastError;
 
