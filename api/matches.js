@@ -9,6 +9,9 @@ const THE_BOYS = [
   { gameName: 'Alessio', tagLine: 'NA1' },
 ];
 
+// Default queue types: Ranked Solo (420), Ranked Flex (440), Normal Draft (400)
+const DEFAULT_QUEUES = [420, 440, 400];
+
 async function riotFetch(url) {
   const response = await fetch(url, {
     headers: { 'X-Riot-Token': RIOT_API_KEY },
@@ -29,8 +32,12 @@ async function getAccountByRiotId(gameName, tagLine) {
   return riotFetch(url);
 }
 
-async function getMatchIds(puuid, start = 0, count = 100) {
-  const url = `${AMERICAS_BASE}/lol/match/v5/matches/by-puuid/${puuid}/ids?start=${start}&count=${count}`;
+// Fetch match IDs with optional queue filter
+async function getMatchIds(puuid, start = 0, count = 100, queue = null) {
+  let url = `${AMERICAS_BASE}/lol/match/v5/matches/by-puuid/${puuid}/ids?start=${start}&count=${count}`;
+  if (queue) {
+    url += `&queue=${queue}`;
+  }
   return riotFetch(url);
 }
 
@@ -54,10 +61,15 @@ export default async function handler(req, res) {
   const startTime = Date.now();
 
   try {
-    // Reduced defaults for hobby plan (10s timeout)
-    const pages = Math.min(parseInt(req.query.pages) || 2, 10);
-    const detailLimit = Math.min(parseInt(req.query.limit) || 75, 300);
-    const batchSize = 10; // Fetch this many match details in parallel
+    // Parse queue types from query param (comma-separated) or use defaults
+    const queues = req.query.queues
+      ? req.query.queues.split(',').map(q => parseInt(q)).filter(q => !isNaN(q))
+      : DEFAULT_QUEUES;
+
+    // Increased limits since we're filtering at source
+    const pages = Math.min(parseInt(req.query.pages) || 3, 10);
+    const detailLimit = Math.min(parseInt(req.query.limit) || 100, 300);
+    const batchSize = 10;
 
     const allMatchIds = new Set();
     const puuidMap = {};
@@ -67,6 +79,7 @@ export default async function handler(req, res) {
       totalUniqueMatchIds: 0,
       matchDetailsFetched: 0,
       matchesWithBoys: 0,
+      queuesFiltered: queues,
       errors: [],
       timeMs: 0
     };
@@ -87,31 +100,40 @@ export default async function handler(req, res) {
 
     const puuids = Object.values(puuidMap);
 
-    // Fetch match IDs for all players in parallel (first page only for speed)
-    // Then do additional pages sequentially if time permits
-    const matchIdPromises = Object.entries(puuidMap).map(async ([name, puuid]) => {
-      const allIds = [];
-      for (let page = 0; page < pages; page++) {
-        try {
-          const matchIds = await getMatchIds(puuid, page * 100, 100);
-          allIds.push(...matchIds);
-          if (matchIds.length < 100) break;
-          // Check if we're running low on time (leave 6s for match details)
-          if (Date.now() - startTime > 4000) break;
-        } catch (err) {
-          debug.errors.push(`Match IDs error for ${name} page ${page}: ${err.message}`);
-          break;
+    // Fetch match IDs for each queue type and player
+    // Riot API only allows one queue at a time, so we need to fetch for each queue
+    for (const queue of queues) {
+      const matchIdPromises = Object.entries(puuidMap).map(async ([name, puuid]) => {
+        const allIds = [];
+        for (let page = 0; page < pages; page++) {
+          try {
+            const matchIds = await getMatchIds(puuid, page * 100, 100, queue);
+            allIds.push(...matchIds);
+            if (matchIds.length < 100) break;
+            // Check time - leave enough for match details
+            if (Date.now() - startTime > 3000) break;
+          } catch (err) {
+            debug.errors.push(`Match IDs error for ${name} queue ${queue} page ${page}: ${err.message}`);
+            break;
+          }
+        }
+        return { name, matchIds: allIds };
+      });
+
+      const matchIdResults = await Promise.allSettled(matchIdPromises);
+
+      for (const result of matchIdResults) {
+        if (result.status === 'fulfilled') {
+          const key = `${result.value.name}_q${queues.indexOf(queue)}`;
+          debug.matchIdsPerPlayer[key] = result.value.matchIds.length;
+          result.value.matchIds.forEach(id => allMatchIds.add(id));
         }
       }
-      return { name, matchIds: allIds };
-    });
 
-    const matchIdResults = await Promise.allSettled(matchIdPromises);
-
-    for (const result of matchIdResults) {
-      if (result.status === 'fulfilled') {
-        debug.matchIdsPerPlayer[result.value.name] = result.value.matchIds.length;
-        result.value.matchIds.forEach(id => allMatchIds.add(id));
+      // Check if we're running low on time
+      if (Date.now() - startTime > 4000) {
+        debug.errors.push(`Time limit reached after queue ${queue}`);
+        break;
       }
     }
 

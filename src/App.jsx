@@ -615,9 +615,9 @@ export default function BoyStats() {
   const [error, setError] = useState(null);
 
   const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
-  const [queueFilter, setQueueFilter] = useState(new Set(['420', '440', '400', '450', '490', '1700'])); // All main queues selected
+  const [queueFilter, setQueueFilter] = useState(new Set(['420', '440', '400'])); // Solo, Flex, Normal by default
   const [resultFilter, setResultFilter] = useState('all');
-  const [partySizeFilter, setPartySizeFilter] = useState(new Set(['1', '2', '3', '4', '5']));
+  const [partySizeFilter, setPartySizeFilter] = useState(new Set(['2', '3', '4', '5'])); // Exclude solo queue by default
   const [timeFilter, setTimeFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('dashboard');
 
@@ -642,9 +642,9 @@ export default function BoyStats() {
         const playersData = await playersRes.json();
         setPlayers(playersData);
 
-        // Fetch matches
+        // Fetch matches - filter by default queues (Solo, Flex, Normal) at API level
         setLoadingMessage('Fetching match history (this may take a while)...');
-        const matchesRes = await fetch(`${API_BASE}/matches?max=200`);
+        const matchesRes = await fetch(`${API_BASE}/matches?queues=420,440,400`);
         const matchesData = await matchesRes.json();
         setMatches(matchesData.matches || []);
 
@@ -768,7 +768,7 @@ export default function BoyStats() {
               <div className="text-5xl">🎮</div>
               <div>
                 <h1 className="text-3xl md:text-4xl font-black text-amber-400">BOYSTATS</h1>
-                <p className="text-slate-400 text-sm">{matches.length} Matches • {filteredMatches.length} Filtered</p>
+                <p className="text-slate-400 text-sm">{filteredMatches.length} Matches</p>
               </div>
             </div>
             <div className="flex gap-2">
