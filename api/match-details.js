@@ -17,6 +17,21 @@ async function getMatchDetails(matchId) {
   return riotFetch(url);
 }
 
+// Helper to fetch with concurrency limit
+async function fetchWithConcurrency(items, fetchFn, concurrency = 5) {
+  const results = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const batchResults = await Promise.allSettled(batch.map(fetchFn));
+    results.push(...batchResults);
+    // Small delay between mini-batches to respect rate limits
+    if (i + concurrency < items.length) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+  return results;
+}
+
 export const config = {
   maxDuration: 60,
 };
@@ -47,16 +62,18 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'players map is required' });
     }
 
-    // Limit batch size to prevent timeout
-    const batchIds = matchIds.slice(0, 25);
+    // Reduce batch size to 15 to stay well within timeout
+    const batchIds = matchIds.slice(0, 15);
     const puuids = Object.values(players);
 
     const matches = [];
     const errors = [];
 
-    // Fetch all match details in parallel
-    const results = await Promise.allSettled(
-      batchIds.map(matchId => getMatchDetails(matchId))
+    // Fetch with limited concurrency (5 at a time) to avoid rate limits
+    const results = await fetchWithConcurrency(
+      batchIds,
+      matchId => getMatchDetails(matchId),
+      5
     );
 
     for (let i = 0; i < results.length; i++) {

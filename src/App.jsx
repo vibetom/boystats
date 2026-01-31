@@ -683,9 +683,11 @@ export default function BoyStats() {
         setLoadingSubMessage('Now fetching match details...');
 
         // Phase 2: Fetch match details in batches
-        const BATCH_SIZE = 25;
+        // Smaller batches (15) with rate limiting to avoid Vercel timeout
+        const BATCH_SIZE = 15;
         const allMatches = [];
         let processed = 0;
+        let failedBatches = 0;
 
         for (let i = 0; i < allMatchIds.length; i += BATCH_SIZE) {
           const batchIds = allMatchIds.slice(i, i + BATCH_SIZE);
@@ -700,9 +702,21 @@ export default function BoyStats() {
               }),
             });
 
+            if (!detailsRes.ok) {
+              console.error('Batch response not ok:', detailsRes.status);
+              failedBatches++;
+              processed += batchIds.length;
+              continue;
+            }
+
             const detailsData = await detailsRes.json();
 
-            if (detailsData.matches) {
+            if (detailsData.error) {
+              console.error('Batch error from API:', detailsData.error);
+              failedBatches++;
+            }
+
+            if (detailsData.matches && detailsData.matches.length > 0) {
               allMatches.push(...detailsData.matches);
               // Update matches incrementally so user sees progress
               setMatches([...allMatches].sort((a, b) => b.gameCreation - a.gameCreation));
@@ -712,16 +726,19 @@ export default function BoyStats() {
             const progress = 15 + (processed / allMatchIds.length) * 85;
             setLoadingProgress(progress);
             setLoadingMessage(`Loading matches...`);
-            setLoadingSubMessage(`${allMatches.length} matches loaded (${processed}/${allMatchIds.length} processed)`);
+            const failedMsg = failedBatches > 0 ? ` (${failedBatches} batches failed)` : '';
+            setLoadingSubMessage(`${allMatches.length} matches loaded (${processed}/${allMatchIds.length} processed)${failedMsg}`);
 
           } catch (batchErr) {
-            console.error('Batch error:', batchErr);
+            console.error('Batch fetch error:', batchErr);
+            failedBatches++;
+            processed += batchIds.length;
             // Continue with next batch on error
           }
 
-          // Small delay between batches to avoid overwhelming the API
+          // Delay between batches to respect rate limits
           if (i + BATCH_SIZE < allMatchIds.length) {
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 200));
           }
         }
 
