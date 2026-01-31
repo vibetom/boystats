@@ -9,8 +9,8 @@ const THE_BOYS = [
   { gameName: 'Alessio', tagLine: 'NA1' },
 ];
 
-// Default queue types: Ranked Solo (420), Ranked Flex (440), Normal Draft (400)
-const DEFAULT_QUEUES = [420, 440, 400];
+// Default queue types: Ranked Solo (420), Ranked Flex (440), Normal Draft (400), ARAM (450)
+const DEFAULT_QUEUES = [420, 440, 400, 450];
 
 async function riotFetch(url) {
   const response = await fetch(url, {

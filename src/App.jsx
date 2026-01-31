@@ -642,9 +642,9 @@ export default function BoyStats() {
         const playersData = await playersRes.json();
         setPlayers(playersData);
 
-        // Fetch matches - filter by default queues (Solo, Flex, Normal) at API level
+        // Fetch matches - filter by queues (Solo, Flex, Normal, ARAM) at API level
         setLoadingMessage('Fetching match history (this may take a while)...');
-        const matchesRes = await fetch(`${API_BASE}/matches?queues=420,440,400`);
+        const matchesRes = await fetch(`${API_BASE}/matches?queues=420,440,400,450`);
         const matchesData = await matchesRes.json();
         setMatches(matchesData.matches || []);
 
@@ -768,7 +768,7 @@ export default function BoyStats() {
               <div className="text-5xl">🎮</div>
               <div>
                 <h1 className="text-3xl md:text-4xl font-black text-amber-400">BOYSTATS</h1>
-                <p className="text-slate-400 text-sm">{filteredMatches.length} Matches</p>
+                <p className="text-slate-400 text-sm">{matches.length} Matches • {filteredMatches.length} Filtered</p>
               </div>
             </div>
             <div className="flex gap-2">
@@ -815,7 +815,7 @@ export default function BoyStats() {
               </select>
             </div>
 
-            <div className="col-span-2">
+            <div>
               <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Queue</label>
               <div className="flex flex-wrap gap-1">
                 {[
@@ -823,8 +823,6 @@ export default function BoyStats() {
                   { id: '440', label: 'Flex' },
                   { id: '400', label: 'Norm' },
                   { id: '450', label: 'ARAM' },
-                  { id: '490', label: 'Quick' },
-                  { id: '1700', label: 'Swift' },
                 ].map(q => (
                   <button key={q.id} onClick={() => toggleQueue(q.id)}
                     className={`px-2 py-2 rounded-lg text-xs font-bold border-2 transition-all ${queueFilter.has(q.id) ? 'bg-amber-500 border-amber-400 text-black' : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500'
