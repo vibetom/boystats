@@ -723,14 +723,18 @@ export default function BoyStats() {
               failedBatches++;
             }
 
-            // Debug logging
-            if (detailsData.skippedNoboys > 0) {
-              console.log('Batch debug:', {
-                processed: detailsData.processed,
-                matchesFound: detailsData.matches?.length || 0,
-                skippedNoboys: detailsData.skippedNoboys,
-                expectedPuuids: detailsData.expectedPuuids,
-              });
+            // Debug logging - log EVERY batch
+            const batchNum = Math.floor(i/BATCH_SIZE) + 1;
+            console.log(`Batch ${batchNum}:`, {
+              processed: detailsData.processed,
+              matchesFound: detailsData.matches?.length || 0,
+              skippedNoboys: detailsData.skippedNoboys || 0,
+              totalLoadedSoFar: allMatches.length + (detailsData.matches?.length || 0),
+            });
+
+            // If this batch had skipped matches, log the debug info
+            if (detailsData.debugInfo) {
+              console.log(`Batch ${batchNum} PUUID mismatch debug:`, detailsData.debugInfo);
             }
 
             if (detailsData.matches && detailsData.matches.length > 0) {
