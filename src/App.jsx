@@ -34,7 +34,7 @@ const PLAYER_EMOJIS = {
 // UTILITIES
 // ============================================================================
 
-const QUEUE_NAMES = { 420: "Ranked Solo", 440: "Ranked Flex", 400: "Normal Draft", 450: "ARAM", 490: "Quickplay" };
+const QUEUE_NAMES = { 420: "Ranked Solo", 440: "Ranked Flex", 400: "Normal Draft", 450: "ARAM", 490: "Quickplay", 1700: "Swiftplay", 830: "Co-op AI", 840: "Co-op AI", 850: "Co-op AI", 900: "URF", 1900: "URF" };
 const ROLE_SHORT = { TOP: "TOP", JUNGLE: "JNG", MIDDLE: "MID", BOTTOM: "ADC", UTILITY: "SUP", "": "" };
 
 const formatDuration = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
