@@ -615,7 +615,7 @@ export default function BoyStats() {
   const [error, setError] = useState(null);
 
   const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
-  const [queueFilter, setQueueFilter] = useState('all');
+  const [queueFilter, setQueueFilter] = useState(new Set(['420', '440', '400', '450', '490', '1700'])); // All main queues selected
   const [resultFilter, setResultFilter] = useState('all');
   const [partySizeFilter, setPartySizeFilter] = useState(new Set(['1', '2', '3', '4', '5']));
   const [timeFilter, setTimeFilter] = useState('all');
@@ -668,9 +668,18 @@ export default function BoyStats() {
     });
   };
 
+  const toggleQueue = (queueId) => {
+    setQueueFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(queueId)) next.delete(queueId);
+      else next.add(queueId);
+      return next;
+    });
+  };
+
   const filteredMatches = useMemo(() => {
     return matches.filter(match => {
-      if (queueFilter !== 'all' && match.queueId !== parseInt(queueFilter)) return false;
+      if (queueFilter.size > 0 && !queueFilter.has(String(match.queueId))) return false;
       if (timeFilter !== 'all') {
         const days = parseInt(timeFilter);
         if (match.gameCreation < Date.now() - days * 86400000) return false;
@@ -806,16 +815,24 @@ export default function BoyStats() {
               </select>
             </div>
 
-            <div>
+            <div className="col-span-2">
               <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Queue</label>
-              <select value={queueFilter} onChange={e => setQueueFilter(e.target.value)}
-                className="w-full bg-slate-800 border-2 border-slate-600 rounded-lg px-3 py-2 text-white">
-                <option value="all">All</option>
-                <option value="420">Ranked Solo</option>
-                <option value="440">Ranked Flex</option>
-                <option value="400">Normal</option>
-                <option value="450">ARAM</option>
-              </select>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { id: '420', label: 'Solo' },
+                  { id: '440', label: 'Flex' },
+                  { id: '400', label: 'Norm' },
+                  { id: '450', label: 'ARAM' },
+                  { id: '490', label: 'Quick' },
+                  { id: '1700', label: 'Swift' },
+                ].map(q => (
+                  <button key={q.id} onClick={() => toggleQueue(q.id)}
+                    className={`px-2 py-2 rounded-lg text-xs font-bold border-2 transition-all ${queueFilter.has(q.id) ? 'bg-amber-500 border-amber-400 text-black' : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500'
+                      }`}>
+                    {q.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div>
