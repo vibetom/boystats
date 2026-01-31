@@ -1,0 +1,899 @@
+import React, { useState, useMemo, useEffect } from 'react';
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const API_BASE = '/api';
+
+const THE_BOYS = [
+  { gameName: "SomeBees", tagLine: "NA1", emoji: "🐝" },
+  { gameName: "BananaJamHands", tagLine: "NA1", emoji: "🍌" },
+  { gameName: "Storklord", tagLine: "NA1", emoji: "🦩" },
+  { gameName: "pRiNcEsSFiStY", tagLine: "NA1", emoji: "👸" },
+  { gameName: "Alessio", tagLine: "NA1", emoji: "🧙" },
+];
+
+const PLAYER_COLORS = {
+  "SomeBees": "#fbbf24",
+  "BananaJamHands": "#34d399",
+  "Storklord": "#60a5fa",
+  "pRiNcEsSFiStY": "#f472b6",
+  "Alessio": "#a78bfa",
+};
+
+const PLAYER_EMOJIS = {
+  "SomeBees": "🐝",
+  "BananaJamHands": "🍌",
+  "Storklord": "🦩",
+  "pRiNcEsSFiStY": "👸",
+  "Alessio": "🧙",
+};
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+const QUEUE_NAMES = { 420: "Ranked Solo", 440: "Ranked Flex", 400: "Normal Draft", 450: "ARAM", 490: "Quickplay" };
+const ROLE_SHORT = { TOP: "TOP", JUNGLE: "JNG", MIDDLE: "MID", BOTTOM: "ADC", UTILITY: "SUP", "": "" };
+
+const formatDuration = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+const formatNumber = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toString();
+
+const TAG_COLORS = {
+  amber: 'bg-amber-900 border-amber-600 text-amber-200',
+  red: 'bg-red-900 border-red-600 text-red-200',
+  emerald: 'bg-emerald-900 border-emerald-600 text-emerald-200',
+  blue: 'bg-blue-900 border-blue-600 text-blue-200',
+  purple: 'bg-purple-900 border-purple-600 text-purple-200',
+  cyan: 'bg-cyan-900 border-cyan-600 text-cyan-200',
+  pink: 'bg-pink-900 border-pink-600 text-pink-200',
+  orange: 'bg-orange-900 border-orange-600 text-orange-200',
+  yellow: 'bg-yellow-900 border-yellow-600 text-yellow-200',
+  slate: 'bg-slate-800 border-slate-600 text-slate-300',
+};
+
+// ============================================================================
+// STATS ENGINE
+// ============================================================================
+
+function calculateAllStats(matches, selectedPlayers) {
+  const players = {};
+  const duos = {};
+  const recentGames = [];
+  let totalGames = 0, totalWins = 0;
+
+  selectedPlayers.forEach(name => {
+    players[name] = {
+      games: 0, wins: 0, kills: 0, deaths: 0, assists: 0,
+      cs: 0, gold: 0, damage: 0, damageTaken: 0,
+      vision: 0, cc: 0, healing: 0, shielding: 0,
+      doubles: 0, triples: 0, quadras: 0, pentas: 0,
+      firstBloods: 0, soloKills: 0, perfectGames: 0, comebacks: 0,
+      surrenders: 0, longestSpree: 0, totalKP: 0, totalDmgShare: 0, totalTime: 0,
+      champions: {}, roles: {},
+    };
+  });
+
+  matches.forEach(match => {
+    const boysInGame = match.participants.filter(p => p.isBoy && selectedPlayers.includes(p.boyName || p.riotIdGameName));
+    if (boysInGame.length === 0) return;
+
+    // Get win status from first boy
+    const didWin = boysInGame[0]?.win || false;
+
+    totalGames++;
+    if (didWin) totalWins++;
+
+    if (recentGames.length < 20) {
+      recentGames.push({ won: didWin, players: boysInGame.map(p => p.boyName || p.riotIdGameName) });
+    }
+
+    const teamKills = match.participants
+      .filter(p => p.teamId === boysInGame[0]?.teamId)
+      .reduce((sum, p) => sum + p.kills, 0);
+
+    boysInGame.forEach(p => {
+      const name = p.boyName || p.riotIdGameName;
+      const s = players[name];
+      if (!s) return;
+
+      s.games++;
+      if (p.win) s.wins++;
+      s.kills += p.kills;
+      s.deaths += p.deaths;
+      s.assists += p.assists;
+      s.cs += (p.totalMinionsKilled || 0) + (p.neutralMinionsKilled || 0);
+      s.gold += p.goldEarned || 0;
+      s.damage += p.totalDamageDealtToChampions || 0;
+      s.damageTaken += p.totalDamageTaken || 0;
+      s.vision += p.visionScore || 0;
+      s.cc += p.timeCCingOthers || 0;
+      s.healing += p.totalHealsOnTeammates || 0;
+      s.shielding += p.totalDamageShieldedOnTeammates || 0;
+      s.doubles += p.doubleKills || 0;
+      s.triples += p.tripleKills || 0;
+      s.quadras += p.quadraKills || 0;
+      s.pentas += p.pentaKills || 0;
+      if (p.firstBloodKill) s.firstBloods++;
+      s.soloKills += p.challenges?.soloKills || 0;
+      if (p.deaths === 0 && p.win) s.perfectGames++;
+      if (p.challenges?.hadOpenNexus && p.win) s.comebacks++;
+      if (p.gameEndedInSurrender) s.surrenders++;
+      if ((p.largestKillingSpree || 0) > s.longestSpree) s.longestSpree = p.largestKillingSpree;
+
+      // Calculate KP
+      const kp = teamKills > 0 ? (p.kills + p.assists) / teamKills : 0;
+      s.totalKP += kp;
+
+      // Calculate damage share
+      const teamDamage = match.participants
+        .filter(x => x.teamId === p.teamId)
+        .reduce((sum, x) => sum + (x.totalDamageDealtToChampions || 0), 0);
+      const dmgShare = teamDamage > 0 ? (p.totalDamageDealtToChampions || 0) / teamDamage : 0;
+      s.totalDmgShare += dmgShare;
+
+      s.totalTime += match.gameDuration || 0;
+
+      // Champion stats
+      if (p.championName) {
+        if (!s.champions[p.championName]) s.champions[p.championName] = { games: 0, wins: 0 };
+        s.champions[p.championName].games++;
+        if (p.win) s.champions[p.championName].wins++;
+      }
+
+      // Role stats
+      if (p.teamPosition && p.teamPosition !== 'NONE' && p.teamPosition !== '') {
+        s.roles[p.teamPosition] = (s.roles[p.teamPosition] || 0) + 1;
+      }
+    });
+
+    // Duo stats
+    const names = [...new Set(boysInGame.map(p => p.boyName || p.riotIdGameName))].sort();
+    if (names.length >= 2) {
+      for (let i = 0; i < names.length; i++) {
+        for (let j = i + 1; j < names.length; j++) {
+          const key = `${names[i]}+${names[j]}`;
+          if (!duos[key]) duos[key] = { games: 0, wins: 0, players: [names[i], names[j]] };
+          duos[key].games++;
+          if (didWin) duos[key].wins++;
+        }
+      }
+    }
+  });
+
+  return { players, duos, totalGames, totalWins, recentGames };
+}
+
+// ============================================================================
+// PLAYER TAGS
+// ============================================================================
+
+const TAG_DEFINITIONS = {
+  'KDA Demon': { icon: '😇', color: 'emerald', desc: 'Averaging 4+ KDA' },
+  'Clean Player': { icon: '✨', color: 'cyan', desc: 'Solid 3+ KDA' },
+  'Death Prone': { icon: '💀', color: 'red', desc: 'Below 1.5 KDA' },
+  'Winner': { icon: '🏆', color: 'amber', desc: '60%+ win rate' },
+  'Climbing': { icon: '📈', color: 'emerald', desc: '55%+ win rate' },
+  'Struggling': { icon: '📉', color: 'red', desc: 'Below 40% win rate' },
+  'Slayer': { icon: '⚔️', color: 'red', desc: '9+ kills per game' },
+  'Team Player': { icon: '🤝', color: 'blue', desc: '12+ assists per game' },
+  'Carry Potential': { icon: '💪', color: 'orange', desc: '30%+ of team damage' },
+  'Always Involved': { icon: '👑', color: 'amber', desc: '65%+ kill participation' },
+  'Vision God': { icon: '👁️', color: 'blue', desc: '50+ vision score per game' },
+  'Pentakill Legend': { icon: '🏆', color: 'amber', desc: 'Has scored pentakills' },
+  'Survivor': { icon: '🛡️', color: 'emerald', desc: 'Under 3 deaths per game' },
+  'Frontliner': { icon: '🛡️', color: 'blue', desc: 'Takes tons of damage' },
+  'Guardian': { icon: '💗', color: 'pink', desc: 'High healing and shielding' },
+};
+
+function generatePlayerTags(name, stats) {
+  const s = stats;
+  if (s.games < 2) return [];
+
+  const tags = [];
+  const kda = (s.kills + s.assists) / Math.max(s.deaths, 1);
+  const avgDeaths = s.deaths / s.games;
+  const avgAssists = s.assists / s.games;
+  const winRate = s.wins / s.games;
+  const avgKP = s.totalKP / s.games;
+  const avgDmgShare = s.totalDmgShare / s.games;
+  const avgVision = s.vision / s.games;
+
+  if (kda >= 4) tags.push('KDA Demon');
+  else if (kda >= 3) tags.push('Clean Player');
+  else if (kda < 1.5) tags.push('Death Prone');
+
+  if (winRate >= 0.6) tags.push('Winner');
+  else if (winRate >= 0.55) tags.push('Climbing');
+  else if (winRate < 0.4) tags.push('Struggling');
+
+  if (avgDeaths < 3) tags.push('Survivor');
+  if (avgAssists >= 12) tags.push('Team Player');
+  if (avgDmgShare >= 0.3) tags.push('Carry Potential');
+  if (avgKP >= 0.65) tags.push('Always Involved');
+  if (avgVision >= 50) tags.push('Vision God');
+  if (s.pentas > 0) tags.push('Pentakill Legend');
+  if (s.damageTaken / s.games > 25000) tags.push('Frontliner');
+  if ((s.healing + s.shielding) / s.games > 5000) tags.push('Guardian');
+
+  return tags.slice(0, 3).map(label => ({ label, ...TAG_DEFINITIONS[label] })).filter(t => t.icon);
+}
+
+// ============================================================================
+// MATCH INSIGHTS
+// ============================================================================
+
+function generateMatchInsights(match) {
+  const boys = match.participants.filter(p => p.isBoy);
+  const tags = [];
+
+  if (boys.length === 0) return { tags: [], insights: [] };
+
+  const didWin = boys[0]?.win;
+  const teamId = boys[0]?.teamId;
+  const teamKills = match.participants.filter(p => p.teamId === teamId).reduce((sum, p) => sum + p.kills, 0);
+
+  const boysByKDA = boys
+    .map(p => ({
+      ...p,
+      name: p.boyName || p.riotIdGameName,
+      kda: (p.kills + p.assists) / Math.max(p.deaths, 1),
+      kp: teamKills > 0 ? (p.kills + p.assists) / teamKills : 0
+    }))
+    .sort((a, b) => b.kda - a.kda);
+
+  if (boysByKDA.length > 0 && boysByKDA[0].kda >= 3 && boysByKDA[0].kp > 0.2) {
+    tags.push({ label: 'MVP', player: boysByKDA[0].name, color: 'amber', icon: '👑' });
+  }
+
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if (p.pentaKills > 0) tags.push({ label: 'PENTAKILL', player: name, color: 'amber', icon: '🏆' });
+    else if (p.quadraKills > 0) tags.push({ label: 'Quadra', player: name, color: 'purple', icon: '💎' });
+    else if (p.tripleKills > 0) tags.push({ label: 'Triple', player: name, color: 'blue', icon: '🔥' });
+
+    if (p.deaths === 0 && didWin && p.kills + p.assists >= 5) {
+      tags.push({ label: 'Perfect', player: name, color: 'cyan', icon: '✨' });
+    }
+    if (p.firstBloodKill) tags.push({ label: 'First Blood', player: name, color: 'red', icon: '🩸' });
+    if (p.kills >= 12) tags.push({ label: 'Kill Leader', player: name, color: 'red', icon: '⚔️' });
+    if (p.deaths >= 10) tags.push({ label: 'Rough Game', player: name, color: 'red', icon: '💀' });
+  });
+
+  if (boys.length === 5) tags.push({ label: 'Full Squad', color: 'amber', icon: '👥' });
+  else if (boys.length === 1) tags.push({ label: 'Solo Queue', color: 'slate', icon: '🎮' });
+
+  const uniqueTags = [];
+  const seen = new Set();
+  tags.forEach(t => { if (!seen.has(t.label + (t.player || ''))) { seen.add(t.label + (t.player || '')); uniqueTags.push(t); } });
+
+  return { tags: uniqueTags.slice(0, 6), insights: [] };
+}
+
+// ============================================================================
+// TOOLTIP COMPONENT
+// ============================================================================
+
+function Tooltip({ children, text }) {
+  const [show, setShow] = useState(false);
+
+  return (
+    <div className="relative inline-block">
+      <div onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)} className="cursor-help">
+        {children}
+      </div>
+      {show && (
+        <div className="absolute z-50 bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-slate-800 border-2 border-slate-600 rounded-lg text-sm text-white whitespace-nowrap shadow-xl">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// MATCH CARD
+// ============================================================================
+
+function MatchCard({ match }) {
+  const [expanded, setExpanded] = useState(false);
+  const { tags } = useMemo(() => generateMatchInsights(match), [match]);
+  const boys = match.participants.filter(p => p.isBoy);
+  const isARAM = match.queueId === 450;
+
+  if (boys.length === 0) return null;
+
+  const didWin = boys[0]?.win;
+  const teamId = boys[0]?.teamId;
+  const ourTeam = match.participants.filter(p => p.teamId === teamId);
+  const enemyTeam = match.participants.filter(p => p.teamId !== teamId);
+
+  return (
+    <div className={`rounded-2xl border-2 ${didWin ? 'bg-emerald-950 border-emerald-700' : 'bg-red-950 border-red-800'}`}>
+      <div className="p-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center font-black ${didWin ? 'bg-emerald-600' : 'bg-red-600'}`}>
+              <span className="text-lg">{didWin ? 'W' : 'L'}</span>
+              <span className="text-xs opacity-80">{formatDuration(match.gameDuration)}</span>
+            </div>
+            <div>
+              <div className="font-bold text-white text-lg">{QUEUE_NAMES[match.queueId] || match.gameMode}</div>
+              <div className="text-slate-400 text-sm">{new Date(match.gameCreation).toLocaleDateString()}</div>
+            </div>
+          </div>
+          <div className="text-2xl text-slate-400">{expanded ? '▼' : '▶'}</div>
+        </div>
+
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {tags.map((t, i) => (
+              <span key={i} className={`px-2 py-1 rounded text-xs font-bold border ${TAG_COLORS[t.color]}`}>
+                {t.icon} {t.label}{t.player ? ` (${t.player})` : ''}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {boys.map((p, i) => {
+            const name = p.boyName || p.riotIdGameName;
+            const color = PLAYER_COLORS[name];
+            const emoji = PLAYER_EMOJIS[name];
+            return (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-xl border-2"
+                style={{ background: `${color}20`, borderColor: `${color}60` }}>
+                <span>{emoji}</span>
+                <span className="font-bold" style={{ color }}>{name}</span>
+                <span className="text-slate-300">{p.championName}</span>
+                <span className="font-mono text-white">{p.kills}/{p.deaths}/{p.assists}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t-2 border-slate-700 p-4">
+          {!isARAM ? (
+            <div className="space-y-2">
+              <div className="text-amber-400 font-bold text-sm mb-2">Lane Matchups</div>
+              {ourTeam.map((ally, i) => {
+                const enemy = enemyTeam.find(e => e.teamPosition === ally.teamPosition);
+                if (!enemy) return null;
+                const name = ally.boyName || ally.riotIdGameName;
+                const color = ally.isBoy ? PLAYER_COLORS[name] : null;
+                const emoji = ally.isBoy ? PLAYER_EMOJIS[name] : null;
+
+                return (
+                  <div key={i} className="flex items-center gap-2 p-2 bg-slate-900 rounded-lg border border-slate-700">
+                    <div className="w-10 text-center text-xs font-bold text-slate-400">{ROLE_SHORT[ally.teamPosition] || ''}</div>
+                    <div className={`flex-1 flex items-center gap-2 p-2 rounded-lg ${ally.isBoy ? 'border-2' : 'border border-slate-700'}`}
+                      style={ally.isBoy ? { borderColor: `${color}60`, background: `${color}15` } : {}}>
+                      {ally.isBoy && <span>{emoji}</span>}
+                      <span className={`font-bold ${ally.isBoy ? '' : 'text-slate-400'}`} style={ally.isBoy ? { color } : {}}>
+                        {ally.isBoy ? name : ally.riotIdGameName}
+                      </span>
+                      <span className="text-slate-400 text-sm">{ally.championName}</span>
+                      <span className="font-mono text-white ml-auto">{ally.kills}/{ally.deaths}/{ally.assists}</span>
+                    </div>
+                    <div className="flex-1 flex items-center gap-2 p-2 rounded-lg bg-red-950/50 border border-red-900">
+                      <span className="text-red-300 font-medium">{enemy.riotIdGameName}</span>
+                      <span className="text-slate-400 text-sm">{enemy.championName}</span>
+                      <span className="font-mono text-red-200 ml-auto">{enemy.kills}/{enemy.deaths}/{enemy.assists}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-emerald-400 text-xs font-bold mb-2">Our Team</div>
+                {ourTeam.map((p, i) => {
+                  const name = p.boyName || p.riotIdGameName;
+                  const color = p.isBoy ? PLAYER_COLORS[name] : null;
+                  const emoji = p.isBoy ? PLAYER_EMOJIS[name] : null;
+                  return (
+                    <div key={i} className={`flex items-center gap-2 p-2 mb-1 rounded-lg ${p.isBoy ? 'border' : 'bg-slate-900/50'}`}
+                      style={p.isBoy ? { borderColor: `${color}60`, background: `${color}15` } : {}}>
+                      {p.isBoy && <span>{emoji}</span>}
+                      <span className={p.isBoy ? 'font-bold' : 'text-slate-400'} style={p.isBoy ? { color } : {}}>
+                        {p.isBoy ? name : p.riotIdGameName}
+                      </span>
+                      <span className="text-slate-400 text-sm">{p.championName}</span>
+                      <span className="font-mono text-white ml-auto text-sm">{p.kills}/{p.deaths}/{p.assists}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div>
+                <div className="text-red-400 text-xs font-bold mb-2">Enemy Team</div>
+                {enemyTeam.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 p-2 mb-1 rounded-lg bg-red-950/50">
+                    <span className="text-red-300">{p.riotIdGameName}</span>
+                    <span className="text-slate-400 text-sm">{p.championName}</span>
+                    <span className="font-mono text-red-200 ml-auto text-sm">{p.kills}/{p.deaths}/{p.assists}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// LOADING COMPONENT
+// ============================================================================
+
+function LoadingScreen({ message }) {
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="text-6xl mb-4 animate-bounce">🎮</div>
+        <h1 className="text-3xl font-black text-amber-400 mb-2">BOYSTATS</h1>
+        <p className="text-slate-400">{message}</p>
+        <div className="mt-4 flex justify-center gap-1">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="w-3 h-3 bg-amber-400 rounded-full animate-pulse" style={{ animationDelay: `${i * 0.2}s` }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN APP
+// ============================================================================
+
+export default function BoyStats() {
+  const [matches, setMatches] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState('Connecting to server...');
+  const [error, setError] = useState(null);
+
+  const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
+  const [queueFilter, setQueueFilter] = useState('all');
+  const [resultFilter, setResultFilter] = useState('all');
+  const [partySizeFilter, setPartySizeFilter] = useState(new Set(['1', '2', '3', '4', '5']));
+  const [timeFilter, setTimeFilter] = useState('all');
+  const [activeTab, setActiveTab] = useState('dashboard');
+
+  // Fetch data on mount
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        // Check server health
+        setLoadingMessage('Checking server...');
+        const healthRes = await fetch(`${API_BASE}/health`);
+        const health = await healthRes.json();
+
+        if (!health.hasApiKey) {
+          setError('Server is running but missing Riot API key. Check server/.env file.');
+          setLoading(false);
+          return;
+        }
+
+        // Fetch players
+        setLoadingMessage('Fetching player data...');
+        const playersRes = await fetch(`${API_BASE}/players`);
+        const playersData = await playersRes.json();
+        setPlayers(playersData);
+
+        // Fetch matches
+        setLoadingMessage('Fetching match history (this may take a while)...');
+        const matchesRes = await fetch(`${API_BASE}/matches?max=200`);
+        const matchesData = await matchesRes.json();
+        setMatches(matchesData.matches || []);
+
+        setLoading(false);
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        setError(`Failed to connect to server: ${err.message}. Make sure the backend is running on port 3001.`);
+        setLoading(false);
+      }
+    }
+
+    fetchData();
+  }, []);
+
+  const togglePartySize = (size) => {
+    setPartySizeFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(size)) next.delete(size);
+      else next.add(size);
+      return next;
+    });
+  };
+
+  const filteredMatches = useMemo(() => {
+    return matches.filter(match => {
+      if (queueFilter !== 'all' && match.queueId !== parseInt(queueFilter)) return false;
+      if (timeFilter !== 'all') {
+        const days = parseInt(timeFilter);
+        if (match.gameCreation < Date.now() - days * 86400000) return false;
+      }
+      const boysInGame = match.participants.filter(p => p.isBoy && selectedPlayers.includes(p.boyName || p.riotIdGameName));
+      if (boysInGame.length === 0) return false;
+
+      const didWin = boysInGame[0]?.win;
+      if (resultFilter === 'wins' && !didWin) return false;
+      if (resultFilter === 'losses' && didWin) return false;
+      if (!partySizeFilter.has(String(boysInGame.length))) return false;
+      return true;
+    });
+  }, [matches, selectedPlayers, queueFilter, resultFilter, partySizeFilter, timeFilter]);
+
+  const stats = useMemo(() => calculateAllStats(filteredMatches, selectedPlayers), [filteredMatches, selectedPlayers]);
+
+  const togglePlayer = (name) => {
+    setSelectedPlayers(prev => prev.includes(name) ? prev.filter(p => p !== name) : [...prev, name]);
+  };
+
+  const streak = useMemo(() => {
+    if (stats.recentGames.length === 0) return { type: null, count: 0 };
+    const first = stats.recentGames[0].won;
+    let count = 1;
+    for (let i = 1; i < stats.recentGames.length; i++) {
+      if (stats.recentGames[i].won === first) count++; else break;
+    }
+    return { type: first ? 'win' : 'loss', count };
+  }, [stats.recentGames]);
+
+  const awards = useMemo(() => {
+    const valid = Object.entries(stats.players).filter(([, s]) => s.games >= 3);
+    if (valid.length === 0) return [];
+    const a = [];
+
+    const mvp = [...valid].sort((x, y) => (y[1].totalKP / y[1].games) - (x[1].totalKP / x[1].games))[0];
+    if (mvp) a.push({ icon: '🏆', title: 'MVP', sub: 'Kill Participation', player: mvp[0], value: `${(mvp[1].totalKP / mvp[1].games * 100).toFixed(0)}%` });
+
+    const deaths = [...valid].sort((x, y) => (y[1].deaths / y[1].games) - (x[1].deaths / x[1].games))[0];
+    if (deaths) a.push({ icon: '💀', title: 'Death Wish', sub: 'Deaths/Game', player: deaths[0], value: `${(deaths[1].deaths / deaths[1].games).toFixed(1)}` });
+
+    const dpm = [...valid].sort((x, y) => (y[1].damage / y[1].totalTime) - (x[1].damage / x[1].totalTime))[0];
+    if (dpm && dpm[1].totalTime > 0) a.push({ icon: '🎯', title: 'Sniper', sub: 'Damage/Min', player: dpm[0], value: `${(dpm[1].damage / dpm[1].totalTime * 60).toFixed(0)}` });
+
+    const vis = [...valid].sort((x, y) => (y[1].vision / y[1].games) - (x[1].vision / x[1].games))[0];
+    if (vis) a.push({ icon: '👁️', title: 'Hawkeye', sub: 'Vision Score', player: vis[0], value: `${(vis[1].vision / vis[1].games).toFixed(1)}` });
+
+    const tank = [...valid].sort((x, y) => (y[1].damageTaken / y[1].games) - (x[1].damageTaken / x[1].games))[0];
+    if (tank) a.push({ icon: '🛡️', title: 'Tank', sub: 'Dmg Taken', player: tank[0], value: formatNumber(Math.round(tank[1].damageTaken / tank[1].games)) });
+
+    const kda = [...valid].sort((x, y) => ((y[1].kills + y[1].assists) / Math.max(y[1].deaths, 1)) - ((x[1].kills + x[1].assists) / Math.max(x[1].deaths, 1)))[0];
+    if (kda) a.push({ icon: '✨', title: 'Cleanest', sub: 'KDA', player: kda[0], value: `${((kda[1].kills + kda[1].assists) / Math.max(kda[1].deaths, 1)).toFixed(2)}` });
+
+    return a;
+  }, [stats.players]);
+
+  // Loading state
+  if (loading) {
+    return <LoadingScreen message={loadingMessage} />;
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="bg-red-950 border-2 border-red-700 rounded-2xl p-8 max-w-lg text-center">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h1 className="text-2xl font-bold text-red-400 mb-2">Connection Error</h1>
+          <p className="text-red-200 mb-4">{error}</p>
+          <p className="text-slate-400 text-sm">
+            Make sure the backend server is running:<br />
+            <code className="bg-slate-800 px-2 py-1 rounded mt-2 inline-block">cd server && npm run dev</code>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white">
+      <header className="border-b-2 border-slate-800 bg-slate-900 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="text-5xl">🎮</div>
+              <div>
+                <h1 className="text-3xl md:text-4xl font-black text-amber-400">BOYSTATS</h1>
+                <p className="text-slate-400 text-sm">{matches.length} Matches • {filteredMatches.length} Filtered</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {['dashboard', 'matches', 'players'].map(tab => (
+                <button key={tab} onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2 rounded-xl font-bold text-sm ${activeTab === tab ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-2 border-slate-700'}`}>
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="border-b-2 border-slate-800 bg-slate-900">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div className="col-span-2 md:col-span-4 lg:col-span-2">
+              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Players</label>
+              <div className="flex flex-wrap gap-2">
+                {THE_BOYS.map(boy => {
+                  const color = PLAYER_COLORS[boy.gameName];
+                  const sel = selectedPlayers.includes(boy.gameName);
+                  return (
+                    <button key={boy.gameName} onClick={() => togglePlayer(boy.gameName)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-bold border-2 ${sel ? 'border-white shadow-lg' : 'border-slate-600 opacity-60 hover:opacity-100'}`}
+                      style={{ background: sel ? color : '#1e293b', color: sel ? '#000' : color }}>
+                      <span>{boy.emoji}</span>
+                      <span className="hidden sm:inline">{boy.gameName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Time</label>
+              <select value={timeFilter} onChange={e => setTimeFilter(e.target.value)}
+                className="w-full bg-slate-800 border-2 border-slate-600 rounded-lg px-3 py-2 text-white">
+                <option value="all">All Time</option>
+                <option value="7">7 Days</option>
+                <option value="14">14 Days</option>
+                <option value="30">30 Days</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Queue</label>
+              <select value={queueFilter} onChange={e => setQueueFilter(e.target.value)}
+                className="w-full bg-slate-800 border-2 border-slate-600 rounded-lg px-3 py-2 text-white">
+                <option value="all">All</option>
+                <option value="420">Ranked Solo</option>
+                <option value="440">Ranked Flex</option>
+                <option value="400">Normal</option>
+                <option value="450">ARAM</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Party Size</label>
+              <div className="flex gap-1">
+                {['1', '2', '3', '4', '5'].map(size => (
+                  <button key={size} onClick={() => togglePartySize(size)}
+                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-bold border-2 transition-all ${partySizeFilter.has(size) ? 'bg-amber-500 border-amber-400 text-black' : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500'
+                      }`}>
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Result</label>
+              <div className="flex gap-1">
+                {['all', 'wins', 'losses'].map(f => (
+                  <button key={f} onClick={() => setResultFilter(f)}
+                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-bold border-2 ${resultFilter === f
+                      ? (f === 'wins' ? 'bg-emerald-600 border-emerald-500 text-white' : f === 'losses' ? 'bg-red-600 border-red-500 text-white' : 'bg-amber-500 border-amber-400 text-black')
+                      : 'bg-slate-800 border-slate-600 text-slate-300'
+                      }`}>
+                    {f === 'all' ? 'All' : f === 'wins' ? 'W' : 'L'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            <div className="bg-slate-900 rounded-2xl p-6 border-2 border-slate-700">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                <div className="text-center">
+                  <div className="text-5xl font-black text-amber-400">{stats.totalGames}</div>
+                  <div className="text-slate-400">Games</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-5xl font-black text-emerald-400">{stats.totalWins}</div>
+                  <div className="text-slate-400">Wins</div>
+                </div>
+                <div className="text-center">
+                  <div className={`text-5xl font-black ${stats.totalGames > 0 && (stats.totalWins / stats.totalGames) >= 0.5 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {stats.totalGames > 0 ? (stats.totalWins / stats.totalGames * 100).toFixed(0) : 0}%
+                  </div>
+                  <div className="text-slate-400">Win Rate</div>
+                </div>
+                <div className="text-center">
+                  <div className={`text-5xl font-black ${streak.type === 'win' ? 'text-emerald-400' : streak.type === 'loss' ? 'text-red-400' : 'text-slate-600'}`}>
+                    {streak.count > 0 ? `${streak.type === 'win' ? '🔥' : '❄️'} ${streak.count}` : '-'}
+                  </div>
+                  <div className="text-slate-400">{streak.type ? `${streak.type === 'win' ? 'Win' : 'Loss'} Streak` : 'Streak'}</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-xl font-bold text-amber-400 mb-4">🏅 Squad Awards</h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                {awards.map((aw, i) => {
+                  const color = PLAYER_COLORS[aw.player];
+                  const emoji = PLAYER_EMOJIS[aw.player];
+                  return (
+                    <div key={i} className="bg-slate-900 rounded-2xl p-4 border-2 border-slate-700 hover:border-slate-500">
+                      <div className="flex items-start justify-between mb-2">
+                        <span className="text-3xl">{aw.icon}</span>
+                        <span className="text-2xl">{emoji}</span>
+                      </div>
+                      <div className="text-white font-bold">{aw.title}</div>
+                      <div className="text-slate-500 text-xs mb-2">{aw.sub}</div>
+                      <div className="font-bold" style={{ color }}>{aw.player}</div>
+                      <div className="text-slate-400 text-xs">{aw.value}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-xl font-bold text-amber-400 mb-4">🤝 Duo Synergy</h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                {Object.entries(stats.duos).filter(([, d]) => d.games >= 3).sort((a, b) => b[1].games - a[1].games).slice(0, 10).map(([key, duo]) => {
+                  const wr = duo.wins / duo.games * 100;
+                  return (
+                    <div key={key} className={`rounded-2xl p-4 border-2 ${wr >= 55 ? 'bg-emerald-950 border-emerald-700' : wr >= 45 ? 'bg-slate-900 border-slate-700' : 'bg-red-950 border-red-800'}`}>
+                      <div className="flex justify-center gap-1 text-2xl mb-2">
+                        <span>{PLAYER_EMOJIS[duo.players[0]]}</span>
+                        <span className="text-slate-500">+</span>
+                        <span>{PLAYER_EMOJIS[duo.players[1]]}</span>
+                      </div>
+                      <div className="text-center">
+                        <div className={`text-2xl font-black ${wr >= 55 ? 'text-emerald-400' : wr >= 45 ? 'text-white' : 'text-red-400'}`}>{wr.toFixed(0)}%</div>
+                        <div className="text-xs text-slate-400">{duo.games} games</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-xl font-bold text-amber-400 mb-4">📈 Recent Form</h2>
+              <div className="flex gap-1 flex-wrap">
+                {stats.recentGames.slice(0, 20).map((g, i) => (
+                  <div key={i} className={`w-10 h-12 rounded-lg flex items-center justify-center font-bold border-2 ${g.won ? 'bg-emerald-900 border-emerald-600 text-emerald-300' : 'bg-red-900 border-red-600 text-red-300'}`}>
+                    {g.won ? 'W' : 'L'}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'matches' && (
+          <div className="space-y-3">
+            <p className="text-slate-400 mb-4">Showing {Math.min(filteredMatches.length, 50)} of {filteredMatches.length} matches</p>
+            {filteredMatches.slice(0, 50).map(m => <MatchCard key={m.matchId} match={m} />)}
+          </div>
+        )}
+
+        {activeTab === 'players' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {selectedPlayers.map(name => {
+              const s = stats.players[name];
+              if (!s || s.games === 0) return null;
+              const color = PLAYER_COLORS[name];
+              const emoji = PLAYER_EMOJIS[name];
+              const wr = (s.wins / s.games * 100).toFixed(0);
+              const kda = ((s.kills + s.assists) / Math.max(s.deaths, 1)).toFixed(2);
+              const playerTags = generatePlayerTags(name, s);
+
+              // Find player ranked info
+              const playerInfo = players.find(p => p.gameName === name);
+
+              const champStats = Object.entries(s.champions).map(([c, d]) => ({ name: c, games: d.games, wins: d.wins, wr: d.wins / d.games }));
+              const topChamps = champStats.filter(c => c.games >= 2).sort((a, b) => b.games - a.games).slice(0, 3);
+
+              return (
+                <div key={name} className="rounded-2xl p-6 border-2 bg-slate-900" style={{ borderColor: `${color}60` }}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="text-5xl">{emoji}</div>
+                    <div>
+                      <div className="text-xl font-black" style={{ color }}>{name}</div>
+                      {playerInfo?.soloQueue && (
+                        <div className="text-sm text-slate-400">
+                          {playerInfo.soloQueue.tier} {playerInfo.soloQueue.rank} • {playerInfo.soloQueue.lp} LP
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {playerTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {playerTags.map((t, i) => (
+                        <Tooltip key={i} text={t.desc}>
+                          <span className={`px-2 py-1 rounded text-xs font-bold border ${TAG_COLORS[t.color]}`}>
+                            {t.icon} {t.label}
+                          </span>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="text-center">
+                      <div className={`text-2xl font-black ${parseInt(wr) >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{wr}%</div>
+                      <div className="text-xs text-slate-400">Win Rate</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-black text-white">{kda}</div>
+                      <div className="text-xs text-slate-400">KDA</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-black text-amber-400">{s.games}</div>
+                      <div className="text-xs text-slate-400">Games</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-4 text-sm">
+                    <div className="flex justify-between bg-slate-800 rounded px-2 py-1">
+                      <span className="text-slate-400">Avg Dmg</span>
+                      <span className="font-bold text-white">{formatNumber(Math.round(s.damage / s.games))}</span>
+                    </div>
+                    <div className="flex justify-between bg-slate-800 rounded px-2 py-1">
+                      <span className="text-slate-400">Vision</span>
+                      <span className="font-bold text-white">{(s.vision / s.games).toFixed(1)}</span>
+                    </div>
+                    <div className="flex justify-between bg-slate-800 rounded px-2 py-1">
+                      <span className="text-slate-400">KP</span>
+                      <span className="font-bold text-white">{(s.totalKP / s.games * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="flex justify-between bg-slate-800 rounded px-2 py-1">
+                      <span className="text-slate-400">CS/Game</span>
+                      <span className="font-bold text-white">{(s.cs / s.games).toFixed(0)}</span>
+                    </div>
+                  </div>
+
+                  {topChamps.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-xs text-emerald-400 font-bold mb-1">Top Champions</div>
+                      <div className="flex flex-wrap gap-2">
+                        {topChamps.map(c => (
+                          <span key={c.name} className="px-2 py-1 bg-emerald-900/50 border border-emerald-700 rounded text-xs text-emerald-200">
+                            {c.name} <span className="text-emerald-400">{(c.wr * 100).toFixed(0)}%</span> <span className="text-slate-400">({c.games})</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(s.pentas > 0 || s.quadras > 0) && (
+                    <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-700">
+                      {s.pentas > 0 && <span className="px-2 py-1 bg-amber-900 border border-amber-600 rounded text-xs text-amber-200">🏆 {s.pentas} Penta</span>}
+                      {s.quadras > 0 && <span className="px-2 py-1 bg-purple-900 border border-purple-600 rounded text-xs text-purple-200">💎 {s.quadras} Quadra</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+
+      <footer className="border-t-2 border-slate-800 mt-12">
+        <div className="max-w-7xl mx-auto px-4 py-6 text-center">
+          <p className="text-amber-400 font-bold">🎮 BOYSTATS</p>
+          <p className="text-xs text-slate-500 mt-1">Built for The Boys • Powered by Riot Games API</p>
+        </div>
+      </footer>
+    </div>
+  );
+}
