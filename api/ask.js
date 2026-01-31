@@ -1,4 +1,4 @@
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 export const config = {
   maxDuration: 30,
@@ -18,8 +18,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (!ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: 'Anthropic API key not configured' });
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'Gemini API key not configured. Add GEMINI_API_KEY to environment variables.' });
   }
 
   try {
@@ -32,45 +32,52 @@ export default async function handler(req, res) {
     // Build context from stats and matches
     const context = buildContext(stats, matches);
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        system: `You are BoyStats AI, an expert analyst for a League of Legends friend group called "The Boys". You have access to their match history and statistics. Be friendly, use gaming terminology, and give specific insights based on the data provided. Keep responses concise but informative. Use emojis sparingly for fun. If asked about something not in the data, say so.
+    const systemPrompt = `You are BoyStats AI, an expert analyst for a League of Legends friend group called "The Boys". You have access to their match history and statistics. Be friendly, use gaming terminology, and give specific insights based on the data provided. Keep responses concise but informative. Use emojis sparingly for fun. If asked about something not in the data, say so.
 
 The players in "The Boys" are:
 - SomeBees 🐝
 - BananaJamHands 🍌
 - Storklord 🦩
 - pRiNcEsSFiStY 👸
-- Alessio 🧙`,
-        messages: [
-          {
-            role: 'user',
-            content: `Here's the current stats and match data for The Boys:
+- Alessio 🧙`;
+
+    const userMessage = `Here's the current stats and match data for The Boys:
 
 ${context}
 
-User's question: ${question}`,
+User's question: ${question}`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: systemPrompt + '\n\n' + userMessage }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1024,
           },
-        ],
-      }),
-    });
+        }),
+      }
+    );
 
     if (!response.ok) {
       const error = await response.text();
-      console.error('Anthropic API error:', error);
+      console.error('Gemini API error:', error);
       return res.status(500).json({ error: 'Failed to get AI response' });
     }
 
     const data = await response.json();
-    const answer = data.content[0]?.text || 'No response generated';
+    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
 
     res.json({ answer });
   } catch (err) {
