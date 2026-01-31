@@ -47,33 +47,51 @@ ${context}
 
 User's question: ${question}`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: systemPrompt + '\n\n' + userMessage }
-              ]
-            }
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1024,
-          },
-        }),
-      }
-    );
+    // Try gemini-2.0-flash-exp first (latest), fallback to gemini-1.5-flash
+    const models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-pro'];
+    let response;
+    let lastError;
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('Gemini API error:', error);
-      return res.status(500).json({ error: 'Failed to get AI response' });
+    for (const model of models) {
+      try {
+        response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: systemPrompt + '\n\n' + userMessage }
+                  ]
+                }
+              ],
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 1024,
+              },
+            }),
+          }
+        );
+
+        if (response.ok) {
+          break; // Success, exit loop
+        }
+        lastError = await response.text();
+        console.error(`Gemini API error with model ${model}:`, lastError);
+      } catch (err) {
+        lastError = err.message;
+        console.error(`Gemini fetch error with model ${model}:`, err.message);
+      }
+    }
+
+    if (!response || !response.ok) {
+      return res.status(500).json({
+        error: `Gemini API error: ${lastError}. Make sure your API key is valid and the Generative Language API is enabled in Google Cloud Console.`
+      });
     }
 
     const data = await response.json();
