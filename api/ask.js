@@ -71,7 +71,7 @@ User's question: ${question}`;
               ],
               generationConfig: {
                 temperature: 0.7,
-                maxOutputTokens: 1024,
+                maxOutputTokens: 4096,
               },
             }),
           }
@@ -95,9 +95,24 @@ User's question: ${question}`;
     }
 
     const data = await response.json();
-    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
 
-    res.json({ answer });
+    // Check for blocked or truncated responses
+    const candidate = data.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    let answer = candidate?.content?.parts?.[0]?.text || '';
+
+    if (!answer && data.promptFeedback?.blockReason) {
+      answer = `Response blocked: ${data.promptFeedback.blockReason}`;
+    } else if (!answer) {
+      answer = 'No response generated';
+    }
+
+    // Log finish reason for debugging
+    if (finishReason && finishReason !== 'STOP') {
+      console.log('Gemini finish reason:', finishReason);
+    }
+
+    res.json({ answer, finishReason });
   } catch (err) {
     console.error('Ask AI error:', err);
     res.status(500).json({ error: err.message });
