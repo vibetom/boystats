@@ -427,6 +427,162 @@ function MatchCard({ match }) {
 }
 
 // ============================================================================
+// AI QUERY COMPONENT
+// ============================================================================
+
+function AskAI({ stats, matches }) {
+  const [question, setQuestion] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [history, setHistory] = useState([]);
+
+  const exampleQuestions = [
+    "Who's the best player right now?",
+    "Which duo has the best synergy?",
+    "Who dies the most?",
+    "What's our best game mode?",
+    "Who should play more ranked?",
+    "Roast our stats",
+  ];
+
+  const askQuestion = async (q) => {
+    const questionText = q || question;
+    if (!questionText.trim()) return;
+
+    setLoading(true);
+    setError(null);
+    setAnswer('');
+
+    try {
+      const response = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: questionText,
+          stats: {
+            players: stats.players,
+            duos: stats.duos,
+            totalGames: stats.totalGames,
+            totalWins: stats.totalWins,
+          },
+          matches: matches.slice(0, 20), // Send recent matches for context
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        setError(data.error);
+      } else {
+        setAnswer(data.answer);
+        setHistory(prev => [...prev, { question: questionText, answer: data.answer }]);
+      }
+    } catch (err) {
+      setError(`Failed to get AI response: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setQuestion('');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-900 rounded-2xl p-6 border-2 border-purple-700">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-4xl">🤖</span>
+          <div>
+            <h2 className="text-xl font-bold text-purple-400">Ask BoyStats AI</h2>
+            <p className="text-slate-400 text-sm">Ask anything about The Boys' stats and performance</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !loading && askQuestion()}
+            placeholder="Ask a question about your squad..."
+            className="flex-1 bg-slate-800 border-2 border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:border-purple-500 focus:outline-none"
+            disabled={loading}
+          />
+          <button
+            onClick={() => askQuestion()}
+            disabled={loading || !question.trim()}
+            className={`px-6 py-3 rounded-xl font-bold ${
+              loading || !question.trim()
+                ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                : 'bg-purple-600 text-white hover:bg-purple-500'
+            }`}
+          >
+            {loading ? '...' : 'Ask'}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {exampleQuestions.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => askQuestion(q)}
+              disabled={loading}
+              className="px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-sm text-slate-300 hover:border-purple-500 hover:text-purple-300 disabled:opacity-50"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading && (
+        <div className="bg-slate-900 rounded-2xl p-6 border-2 border-slate-700">
+          <div className="flex items-center gap-3">
+            <div className="animate-spin text-2xl">🤔</div>
+            <span className="text-slate-400">Analyzing your stats...</span>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-950 rounded-2xl p-6 border-2 border-red-700">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <div className="text-red-400 font-bold">Error</div>
+              <div className="text-red-200">{error}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {answer && !loading && (
+        <div className="bg-slate-900 rounded-2xl p-6 border-2 border-emerald-700">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">🤖</span>
+            <div className="flex-1">
+              <div className="text-emerald-400 font-bold mb-2">BoyStats AI</div>
+              <div className="text-white whitespace-pre-wrap">{answer}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {history.length > 1 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-bold text-slate-400">Previous Questions</h3>
+          {history.slice(0, -1).reverse().map((item, i) => (
+            <div key={i} className="bg-slate-900 rounded-xl p-4 border border-slate-700">
+              <div className="text-purple-400 text-sm mb-2">Q: {item.question}</div>
+              <div className="text-slate-300 text-sm">{item.answer}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // LOADING COMPONENT
 // ============================================================================
 
@@ -607,10 +763,10 @@ export default function BoyStats() {
               </div>
             </div>
             <div className="flex gap-2">
-              {['dashboard', 'matches', 'players'].map(tab => (
+              {['dashboard', 'matches', 'players', 'ask'].map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2 rounded-xl font-bold text-sm ${activeTab === tab ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-2 border-slate-700'}`}>
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  className={`px-4 py-2 rounded-xl font-bold text-sm ${activeTab === tab ? (tab === 'ask' ? 'bg-purple-500 text-white' : 'bg-amber-500 text-black') : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-2 border-slate-700'}`}>
+                  {tab === 'ask' ? '🤖 Ask AI' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
@@ -885,6 +1041,10 @@ export default function BoyStats() {
               );
             })}
           </div>
+        )}
+
+        {activeTab === 'ask' && (
+          <AskAI stats={stats} matches={filteredMatches} />
         )}
       </main>
 
