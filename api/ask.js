@@ -47,8 +47,8 @@ ${context}
 
 User's question: ${question}`;
 
-    // Try different Gemini models - Google keeps changing the names
-    const models = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.0-pro-latest', 'gemini-1.0-pro'];
+    // Try different Gemini models
+    const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
     let response;
     let lastError;
 
