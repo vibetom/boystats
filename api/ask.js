@@ -47,8 +47,8 @@ ${context}
 
 User's question: ${question}`;
 
-    // Try gemini-2.0-flash-exp first (latest), fallback to gemini-1.5-flash
-    const models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-pro'];
+    // Try different Gemini models - Google keeps changing the names
+    const models = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.0-pro-latest', 'gemini-1.0-pro'];
     let response;
     let lastError;
 
