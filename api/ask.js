@@ -105,11 +105,23 @@ export default async function handler(req, res) {
 
 ## RESPONSE FORMAT
 
-- Be conversational and helpful, not robotic
+- **NO TABLES** - tables don't render properly, use conversational text instead
+- **NO MARKDOWN** - avoid headers, bullet lists, bold/italic. Just write naturally
+- **NO CODE BLOCKS** - don't show JSON or code snippets
+- Be conversational and helpful, like chatting with a friend
 - Lead with the key insight, then support with data
 - Use percentages and averages, not raw counts
-- Round numbers sensibly (52.3% not 52.38461538%)
-- Keep responses focused - don't list every single game
+- Round numbers sensibly (52% not 52.38461538%)
+- Keep responses focused and concise - 2-4 paragraphs max
+- Write in flowing sentences, not lists of stats
+
+Example good response:
+"Honestly, Alessio should probably stick to Smolder - he's got a 67% win rate over 12 games with a solid 3.2 KDA. His Jinx games have been rough though, only winning 2 of 8 with a lot of deaths. The data suggests he's better on scaling mages than traditional ADCs."
+
+Example bad response:
+"| Champion | Games | Win Rate |
+|----------|-------|----------|
+| Smolder | 12 | 67% |"
 
 The players ("The Boys"):
 - SomeBees
