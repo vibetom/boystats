@@ -85,12 +85,17 @@ export default async function handler(req, res) {
 
 ## HOW TO ANALYZE
 
+**IMPORTANT: Use the pre-computed stats provided!**
+- Champion win rates are already calculated in "CHAMPION STATS BY PLAYER" section
+- Player overall stats are in "PLAYER STATS SUMMARY" section
+- Do NOT try to recalculate these from the raw JSON - use the pre-computed values
+- Only use raw JSON for specific match lookups or details not in the summaries
+
 **For Champion Recommendations:**
+- Use the CHAMPION STATS BY PLAYER section - it has games, wins, losses per champion
 - Look at 5+ games minimum for meaningful conclusions
 - Consider KDA AND win rate together, not just wins
-- Factor in damage output - are they actually performing well?
 - Compare to their performance on other champions
-- Note role consistency - playing off-role affects performance
 
 **For Player Comparisons:**
 - Normalize by games played (averages, not totals)
@@ -262,7 +267,7 @@ You have access to the COMPLETE match history dataset. Here's what each field me
 
   // Add computed stats summary for quick reference
   if (stats?.players) {
-    context += '## COMPUTED STATS SUMMARY (for quick reference)\n\n';
+    context += '## PLAYER STATS SUMMARY\n\n';
     for (const [name, s] of Object.entries(stats.players)) {
       if (s.games === 0) continue;
       const kda = ((s.kills + s.assists) / Math.max(s.deaths, 1)).toFixed(2);
@@ -270,6 +275,21 @@ You have access to the COMPLETE match history dataset. Here's what each field me
       context += `${name}: ${s.games}g, ${wr}%WR, ${kda}KDA, ${s.kills}K/${s.deaths}D/${s.assists}A, ${s.pentas}penta, ${s.quadras}quadra\n`;
     }
     context += '\n';
+
+    // Add CHAMPION STATS for each player - this is critical for champion-specific questions
+    context += '## CHAMPION STATS BY PLAYER\n\n';
+    context += 'USE THIS DATA for any champion-related questions. Do NOT try to recalculate from raw JSON.\n\n';
+    for (const [name, s] of Object.entries(stats.players)) {
+      if (!s.champions || Object.keys(s.champions).length === 0) continue;
+      context += `### ${name}'s Champions:\n`;
+      const sortedChamps = Object.entries(s.champions)
+        .sort((a, b) => b[1].games - a[1].games);
+      for (const [champ, data] of sortedChamps) {
+        const champWR = ((data.wins / data.games) * 100).toFixed(0);
+        context += `${champ}: ${data.games}g, ${champWR}%WR, ${data.wins}W/${data.games - data.wins}L\n`;
+      }
+      context += '\n';
+    }
   }
 
   if (stats?.duos) {
