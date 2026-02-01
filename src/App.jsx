@@ -777,7 +777,7 @@ function AskAI({ stats, matches }) {
             totalGames: stats.totalGames,
             totalWins: stats.totalWins,
           },
-          matches: matches.slice(0, 20), // Send recent matches for context
+          matches: matches, // Send ALL matches for comprehensive analysis
         }),
       });
 
