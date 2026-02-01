@@ -77,7 +77,7 @@ const MATCH_TAG_DEFINITIONS = {
   'Struggle Bus': '8+ deaths with 2 or fewer kills',
   'Oops': 'Very rough game (KDA under 0.5)',
   'First Blood': 'Got the first kill of the game',
-  'Full Squad': 'All 5 boys playing together',
+  'FULL BOYS': 'All 5 boys playing together',
   '4-Stack': '4 boys playing together',
   'Solo Queue': 'Playing alone',
 };
@@ -593,8 +593,8 @@ function generateMatchInsights(match) {
     }
   });
 
-  // Squad size tags (low priority)
-  if (boys.length === 5) lowPriorityTags.push({ label: 'Full Squad', color: 'amber', icon: '👥' });
+  // Squad size tags
+  if (boys.length === 5) priorityTags.push({ label: 'FULL BOYS', color: 'amber', icon: '👥' });
   else if (boys.length === 4) lowPriorityTags.push({ label: '4-Stack', color: 'blue', icon: '👥' });
   else if (boys.length === 1) lowPriorityTags.push({ label: 'Solo Queue', color: 'slate', icon: '🎮' });
 
