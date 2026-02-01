@@ -45,6 +45,43 @@ async function fetchWithConcurrency(items, fetchFn, concurrency = 2) {
   return results;
 }
 
+// Strip participant data to only essential fields for stats
+function slimParticipant(p, puuids, players) {
+  return {
+    puuid: p.puuid,
+    isBoy: puuids.includes(p.puuid),
+    boyName: Object.entries(players).find(([name, puid]) => puid === p.puuid)?.[0] || null,
+    riotIdGameName: p.riotIdGameName,
+    championName: p.championName,
+    teamId: p.teamId,
+    teamPosition: p.teamPosition,
+    win: p.win,
+    kills: p.kills,
+    deaths: p.deaths,
+    assists: p.assists,
+    totalMinionsKilled: p.totalMinionsKilled,
+    neutralMinionsKilled: p.neutralMinionsKilled,
+    goldEarned: p.goldEarned,
+    totalDamageDealtToChampions: p.totalDamageDealtToChampions,
+    totalDamageTaken: p.totalDamageTaken,
+    visionScore: p.visionScore,
+    timeCCingOthers: p.timeCCingOthers,
+    totalHealsOnTeammates: p.totalHealsOnTeammates,
+    totalDamageShieldedOnTeammates: p.totalDamageShieldedOnTeammates,
+    doubleKills: p.doubleKills,
+    tripleKills: p.tripleKills,
+    quadraKills: p.quadraKills,
+    pentaKills: p.pentaKills,
+    firstBloodKill: p.firstBloodKill,
+    largestKillingSpree: p.largestKillingSpree,
+    gameEndedInSurrender: p.gameEndedInSurrender,
+    challenges: p.challenges ? {
+      soloKills: p.challenges.soloKills,
+      hadOpenNexus: p.challenges.hadOpenNexus,
+    } : undefined,
+  };
+}
+
 export const config = {
   maxDuration: 60,
 };
@@ -116,12 +153,8 @@ export default async function handler(req, res) {
         }
 
         if (boysInMatch.length > 0) {
-          // Annotate participants with boy info
-          match.info.participants = match.info.participants.map(p => ({
-            ...p,
-            isBoy: puuids.includes(p.puuid),
-            boyName: Object.entries(players).find(([name, puid]) => puid === p.puuid)?.[0] || null,
-          }));
+          // Slim down participants to only essential fields
+          const slimParticipants = match.info.participants.map(p => slimParticipant(p, puuids, players));
 
           matches.push({
             matchId: match.metadata.matchId,
@@ -129,7 +162,7 @@ export default async function handler(req, res) {
             gameDuration: match.info.gameDuration,
             gameMode: match.info.gameMode,
             queueId: match.info.queueId,
-            participants: match.info.participants,
+            participants: slimParticipants,
             teams: match.info.teams,
           });
         }
