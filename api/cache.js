@@ -1,4 +1,4 @@
-import { put, head, list } from '@vercel/blob';
+import { put, list, del } from '@vercel/blob';
 
 const CACHE_BLOB_NAME = 'boystats-cache.json';
 
@@ -17,15 +17,20 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      // Find the cache blob
-      const { blobs } = await list({ prefix: CACHE_BLOB_NAME });
+      // List all blobs and find our cache file
+      const { blobs } = await list();
 
-      if (blobs.length === 0) {
+      // Find blob that contains our cache name
+      const cacheBlob = blobs.find(b => b.pathname.includes(CACHE_BLOB_NAME) || b.pathname.endsWith(CACHE_BLOB_NAME));
+
+      if (!cacheBlob) {
+        console.log('No cache blob found. Available blobs:', blobs.map(b => b.pathname));
         return res.status(404).json({ error: 'No cache found', exists: false });
       }
 
+      console.log('Found cache blob:', cacheBlob.pathname, cacheBlob.url);
+
       // Fetch the cache content
-      const cacheBlob = blobs[0];
       const response = await fetch(cacheBlob.url);
 
       if (!response.ok) {
@@ -57,11 +62,25 @@ export default async function handler(req, res) {
         updatedAt: new Date().toISOString(),
       };
 
-      // Upload to Vercel Blob (overwrites if exists)
+      // Delete old cache blobs first
+      try {
+        const { blobs } = await list();
+        const oldCacheBlobs = blobs.filter(b => b.pathname.includes(CACHE_BLOB_NAME));
+        for (const oldBlob of oldCacheBlobs) {
+          await del(oldBlob.url);
+          console.log('Deleted old cache blob:', oldBlob.pathname);
+        }
+      } catch (delErr) {
+        console.log('No old cache to delete or delete failed:', delErr.message);
+      }
+
+      // Upload new cache to Vercel Blob
       const blob = await put(CACHE_BLOB_NAME, JSON.stringify(cacheData), {
         access: 'public',
         addRandomSuffix: false,
       });
+
+      console.log('Created new cache blob:', blob.pathname, blob.url);
 
       return res.json({
         success: true,
