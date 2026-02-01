@@ -228,7 +228,8 @@ const TAG_DEFINITIONS = {
 
   // Fun/Personality
   'One Trick': { icon: '🎪', color: 'purple', desc: 'Plays one champion a lot' },
-  'Flex Player': { icon: '🔄', color: 'cyan', desc: 'Plays many roles' },
+  'Champion Ocean': { icon: '🌊', color: 'blue', desc: 'Plays 15+ different champions' },
+  'Flex Player': { icon: '🔄', color: 'cyan', desc: 'Plays 3+ roles regularly' },
   'Early Bird': { icon: '🐦', color: 'yellow', desc: 'Gets first bloods' },
   'Survivor': { icon: '🏃', color: 'emerald', desc: 'Rarely dies' },
   'Aggro': { icon: '😤', color: 'red', desc: 'Aggressive playstyle' },
@@ -331,11 +332,14 @@ function generatePlayerTags(name, stats) {
   const champCount = Object.keys(s.champions || {}).length;
   const topChampGames = Math.max(...Object.values(s.champions || {}).map(c => c.games), 0);
   if (topChampGames >= s.games * 0.5 && s.games >= 5) normalTags.push('One Trick');
-  else if (champCount >= 8 && s.games >= 10) normalTags.push('Flex Player');
+  else if (champCount >= 15 && s.games >= 20) normalTags.push('Champion Ocean');
 
-  // Role distribution
-  const roleCount = Object.keys(s.roles || {}).length;
-  if (roleCount >= 4 && s.games >= 8) lowPriorityTags.push('Flex Player');
+  // Role distribution - Flex Player requires actually playing multiple roles significantly (15%+ each)
+  const roleEntries = Object.entries(s.roles || {});
+  const rolesWithSignificantGames = roleEntries.filter(([, games]) => games >= s.games * 0.15);
+  if (rolesWithSignificantGames.length >= 3 && s.games >= 20) {
+    normalTags.push('Flex Player');
+  }
 
   // Consistency
   if (kda >= 2.5 && winRate >= 0.48 && winRate <= 0.55 && avgKP >= 0.55) normalTags.push('Rock Solid');
