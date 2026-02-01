@@ -729,6 +729,63 @@ function restoreBackup(backupId) {
   }
 }
 
+// Central cache functions (Vercel Blob)
+async function loadFromCentralCache() {
+  try {
+    const res = await fetch(`${API_BASE}/cache`);
+    if (!res.ok) {
+      if (res.status === 404) {
+        console.log('No central cache found');
+        return null;
+      }
+      throw new Error(`Cache fetch failed: ${res.status}`);
+    }
+    const result = await res.json();
+    if (result.exists && result.data) {
+      console.log('Loaded from central cache:', {
+        matches: result.data.matches?.length || 0,
+        lastUpdated: result.data.updatedAt,
+      });
+      return {
+        matches: result.data.matches || [],
+        matchIds: result.data.matchIds || [],
+        players: result.data.players || [],
+        lastUpdated: result.data.timestamp,
+      };
+    }
+  } catch (err) {
+    console.error('Failed to load from central cache:', err);
+  }
+  return null;
+}
+
+async function saveToCentralCache(matches, matchIds, players) {
+  try {
+    const res = await fetch(`${API_BASE}/cache`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        matches,
+        matchIds,
+        players,
+        timestamp: Date.now(),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Cache save failed: ${res.status}`);
+    }
+    const result = await res.json();
+    console.log('Saved to central cache:', {
+      matchCount: result.matchCount,
+      size: result.size,
+    });
+    return true;
+  } catch (err) {
+    console.error('Failed to save to central cache:', err);
+    return false;
+  }
+}
+
 function formatLastUpdated(timestamp) {
   if (!timestamp) return '';
   const date = new Date(timestamp);
@@ -904,10 +961,13 @@ export default function BoyStats() {
       setMatches(finalMatches);
       setCachedMatchIds(finalMatchIds);
 
-      // Save to cache
+      // Save to local cache
       saveToCache(finalMatches, Array.from(finalMatchIds), playersData);
       setLastUpdated(Date.now());
       setBackups(getBackups());
+
+      // Save to central cache (async, don't block UI)
+      saveToCentralCache(finalMatches, Array.from(finalMatchIds), playersData);
 
       setLoading(false);
       setRefreshing(false);
@@ -963,27 +1023,50 @@ export default function BoyStats() {
     }
   };
 
-  // Load data on mount - try cache first
+  // Load data on mount - try local cache, then central cache, then fetch
   useEffect(() => {
-    const cached = loadFromCache();
-    setBackups(getBackups());
+    const initData = async () => {
+      setBackups(getBackups());
 
-    if (cached && cached.matches.length > 0) {
-      // Use cached data
-      console.log('Loaded from cache:', {
-        matches: cached.matches.length,
-        matchIds: cached.matchIds?.length || 0,
-        lastUpdated: new Date(cached.lastUpdated).toLocaleString(),
-      });
-      setMatches(cached.matches);
-      setCachedMatchIds(new Set(cached.matchIds || []));
-      setPlayers(cached.players);
-      setLastUpdated(cached.lastUpdated);
-      setLoading(false);
-    } else {
-      // No cache, do full fetch
+      // First try local cache
+      const localCached = loadFromCache();
+      if (localCached && localCached.matches.length > 0) {
+        console.log('Loaded from local cache:', {
+          matches: localCached.matches.length,
+          matchIds: localCached.matchIds?.length || 0,
+          lastUpdated: new Date(localCached.lastUpdated).toLocaleString(),
+        });
+        setMatches(localCached.matches);
+        setCachedMatchIds(new Set(localCached.matchIds || []));
+        setPlayers(localCached.players);
+        setLastUpdated(localCached.lastUpdated);
+        setLoading(false);
+        return;
+      }
+
+      // No local cache, try central cache
+      setLoadingMessage('Checking central cache...');
+      const centralCached = await loadFromCentralCache();
+      if (centralCached && centralCached.matches.length > 0) {
+        console.log('Loaded from central cache:', {
+          matches: centralCached.matches.length,
+          matchIds: centralCached.matchIds?.length || 0,
+        });
+        setMatches(centralCached.matches);
+        setCachedMatchIds(new Set(centralCached.matchIds || []));
+        setPlayers(centralCached.players);
+        setLastUpdated(centralCached.lastUpdated);
+        // Save to local cache for next time
+        saveToCache(centralCached.matches, centralCached.matchIds, centralCached.players);
+        setLoading(false);
+        return;
+      }
+
+      // No cache at all, do full fetch
       fetchData(false, [], new Set());
-    }
+    };
+
+    initData();
   }, []);
 
   const togglePartySize = (size) => {
