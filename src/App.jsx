@@ -53,6 +53,35 @@ const TAG_COLORS = {
   slate: 'bg-slate-800 border-slate-600 text-slate-300',
 };
 
+const MATCH_TAG_DEFINITIONS = {
+  'MVP': 'Best KDA (2.5+) with 25%+ kill participation',
+  'PENTAKILL': 'Got all 5 kills in a team fight',
+  'Quadra': 'Got 4 kills in quick succession',
+  'Triple': 'Got 3 kills in quick succession',
+  'Perfect': 'Zero deaths with 5+ kills/assists',
+  'Kill Leader': 'Most kills on the team (8+)',
+  'Damage Carry': 'Dealt 35%+ of the team\'s damage',
+  'Frontline': 'Absorbed 40k+ damage for the team',
+  'Vision King': 'Highest vision score (50+)',
+  'Farm God': '8+ CS per minute',
+  'Assist King': '15+ assists',
+  'CC Machine': '60+ seconds of crowd control',
+  'Guardian': '10k+ healing/shielding on teammates',
+  'Duelist': '5+ solo kills (1v1 wins)',
+  'Unstoppable': '7+ kill streak without dying',
+  'Comeback': 'Won after enemy exposed the nexus',
+  'Stomp': 'Dominant win under 25 min with 30+ kills',
+  'Marathon': 'Game lasted 35+ minutes',
+  'FF@15': 'Enemy team surrendered',
+  'Rough Game': '10+ deaths (no redeeming stats)',
+  'Struggle Bus': '8+ deaths with 2 or fewer kills',
+  'Oops': 'Very rough game (KDA under 0.5)',
+  'First Blood': 'Got the first kill of the game',
+  'Full Squad': 'All 5 boys playing together',
+  '4-Stack': '4 boys playing together',
+  'Solo Queue': 'Playing alone',
+};
+
 // ============================================================================
 // STATS ENGINE
 // ============================================================================
@@ -644,9 +673,11 @@ function MatchCard({ match }) {
         {tags.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
             {tags.map((t, i) => (
-              <span key={i} className={`px-2 py-1 rounded text-xs font-bold border ${TAG_COLORS[t.color]}`}>
-                {t.icon} {t.label}{t.player ? ` (${t.player})` : ''}
-              </span>
+              <Tooltip key={i} text={MATCH_TAG_DEFINITIONS[t.label] || t.label}>
+                <span className={`px-2 py-1 rounded text-xs font-bold border ${TAG_COLORS[t.color]}`}>
+                  {t.icon} {t.label}{t.player ? ` (${t.player})` : ''}
+                </span>
+              </Tooltip>
             ))}
           </div>
         )}
