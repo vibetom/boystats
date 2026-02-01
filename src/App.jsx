@@ -620,14 +620,66 @@ function LoadingScreen({ message, progress, subMessage }) {
 // MAIN APP
 // ============================================================================
 
+// Cache keys for localStorage
+const CACHE_KEY_MATCHES = 'boystats_matches';
+const CACHE_KEY_PLAYERS = 'boystats_players';
+const CACHE_KEY_TIMESTAMP = 'boystats_lastUpdated';
+
+function loadFromCache() {
+  try {
+    const matchesJson = localStorage.getItem(CACHE_KEY_MATCHES);
+    const playersJson = localStorage.getItem(CACHE_KEY_PLAYERS);
+    const timestamp = localStorage.getItem(CACHE_KEY_TIMESTAMP);
+
+    if (matchesJson && playersJson && timestamp) {
+      return {
+        matches: JSON.parse(matchesJson),
+        players: JSON.parse(playersJson),
+        lastUpdated: parseInt(timestamp),
+      };
+    }
+  } catch (err) {
+    console.error('Failed to load from cache:', err);
+  }
+  return null;
+}
+
+function saveToCache(matches, players) {
+  try {
+    localStorage.setItem(CACHE_KEY_MATCHES, JSON.stringify(matches));
+    localStorage.setItem(CACHE_KEY_PLAYERS, JSON.stringify(players));
+    localStorage.setItem(CACHE_KEY_TIMESTAMP, Date.now().toString());
+  } catch (err) {
+    console.error('Failed to save to cache:', err);
+  }
+}
+
+function formatLastUpdated(timestamp) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
 export default function BoyStats() {
   const [matches, setMatches] = useState([]);
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('Connecting to server...');
   const [loadingSubMessage, setLoadingSubMessage] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [error, setError] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
   const [queueFilter, setQueueFilter] = useState(new Set(['420', '440', '400'])); // Solo, Flex, Normal by default
@@ -636,85 +688,86 @@ export default function BoyStats() {
   const [timeFilter, setTimeFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('dashboard');
 
-  // Fetch data on mount using progressive loading
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        // Check server health
-        setLoadingMessage('Checking server...');
-        const healthRes = await fetch(`${API_BASE}/health`);
-        const health = await healthRes.json();
+  // Fetch fresh data from API
+  const fetchFreshData = async () => {
+    try {
+      // Check server health
+      setLoadingMessage('Checking server...');
+      const healthRes = await fetch(`${API_BASE}/health`);
+      const health = await healthRes.json();
 
-        if (!health.hasApiKey) {
-          setError('Server is running but missing Riot API key. Check server/.env file.');
-          setLoading(false);
-          return;
-        }
+      if (!health.hasApiKey) {
+        setError('Server is running but missing Riot API key. Check server/.env file.');
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
 
-        // Fetch players
-        setLoadingMessage('Fetching player data...');
-        const playersRes = await fetch(`${API_BASE}/players`);
-        const playersData = await playersRes.json();
-        setPlayers(playersData);
+      // Fetch players
+      setLoadingMessage('Fetching player data...');
+      const playersRes = await fetch(`${API_BASE}/players`);
+      const playersData = await playersRes.json();
+      setPlayers(playersData);
 
-        // Phase 1: Fetch all match IDs (fast)
-        setLoadingMessage('Finding all matches...');
-        setLoadingSubMessage('This fetches match IDs from the Riot API');
-        setLoadingProgress(5);
+      // Phase 1: Fetch all match IDs (fast)
+      setLoadingMessage('Finding all matches...');
+      setLoadingSubMessage('This fetches match IDs from the Riot API');
+      setLoadingProgress(5);
 
-        const matchIdsRes = await fetch(`${API_BASE}/match-ids?queues=420,440,400,450&pages=10`);
-        const matchIdsData = await matchIdsRes.json();
+      const matchIdsRes = await fetch(`${API_BASE}/match-ids?queues=420,440,400,450&pages=10`);
+      const matchIdsData = await matchIdsRes.json();
 
-        if (matchIdsData.error) {
-          throw new Error(matchIdsData.error);
-        }
+      if (matchIdsData.error) {
+        throw new Error(matchIdsData.error);
+      }
 
-        const allMatchIds = matchIdsData.matchIds || [];
-        const playerMap = matchIdsData.players || {};
+      const allMatchIds = matchIdsData.matchIds || [];
+      const playerMap = matchIdsData.players || {};
 
-        // Debug: verify player map has data
-        console.log('Player map received:', {
-          playerCount: Object.keys(playerMap).length,
-          players: Object.keys(playerMap),
-          samplePuuid: Object.values(playerMap)[0]?.substring(0, 20) + '...',
-        });
+      // Debug: verify player map has data
+      console.log('Player map received:', {
+        playerCount: Object.keys(playerMap).length,
+        players: Object.keys(playerMap),
+        samplePuuid: Object.values(playerMap)[0]?.substring(0, 20) + '...',
+      });
 
-        if (allMatchIds.length === 0) {
-          setMatches([]);
-          setLoading(false);
-          return;
-        }
+      if (allMatchIds.length === 0) {
+        setMatches([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
 
-        setLoadingProgress(15);
-        setLoadingMessage(`Found ${allMatchIds.length} matches`);
-        setLoadingSubMessage('Now fetching match details...');
+      setLoadingProgress(15);
+      setLoadingMessage(`Found ${allMatchIds.length} matches`);
+      setLoadingSubMessage('Now fetching match details...');
 
-        // Phase 2: Fetch match details in batches
-        // Smaller batches (10) with rate limiting to avoid Riot API limits
-        const BATCH_SIZE = 10;
-        const allMatches = [];
-        let processed = 0;
-        let failedBatches = 0;
+      // Phase 2: Fetch match details in batches
+      // Smaller batches (10) with rate limiting to avoid Riot API limits
+      const BATCH_SIZE = 10;
+      const allMatches = [];
+      let processed = 0;
+      let failedBatches = 0;
 
-        for (let i = 0; i < allMatchIds.length; i += BATCH_SIZE) {
-          const batchIds = allMatchIds.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < allMatchIds.length; i += BATCH_SIZE) {
+        const batchIds = allMatchIds.slice(i, i + BATCH_SIZE);
 
-          try {
-            const detailsRes = await fetch(`${API_BASE}/match-details`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                matchIds: batchIds,
-                players: playerMap,
-              }),
-            });
+        try {
+          const detailsRes = await fetch(`${API_BASE}/match-details`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              matchIds: batchIds,
+              players: playerMap,
+            }),
+          });
 
-            if (!detailsRes.ok) {
-              console.error('Batch response not ok:', detailsRes.status);
-              failedBatches++;
-              processed += batchIds.length;
-              continue;
-            }
+          if (!detailsRes.ok) {
+            console.error('Batch response not ok:', detailsRes.status);
+            failedBatches++;
+            processed += batchIds.length;
+            continue;
+          }
 
             const detailsData = await detailsRes.json();
 
@@ -764,19 +817,50 @@ export default function BoyStats() {
           }
         }
 
-        // Final sort
+        // Final sort and save
         allMatches.sort((a, b) => b.gameCreation - a.gameCreation);
         setMatches(allMatches);
+
+        // Save to cache
+        saveToCache(allMatches, playersData);
+        setLastUpdated(Date.now());
+
         setLoading(false);
+        setRefreshing(false);
 
       } catch (err) {
         console.error('Error fetching data:', err);
         setError(`Failed to connect to server: ${err.message}. Make sure the backend is running.`);
         setLoading(false);
+        setRefreshing(false);
       }
-    }
+    };
 
-    fetchData();
+  // Handle refresh button click
+  const handleRefresh = () => {
+    setRefreshing(true);
+    setLoadingProgress(0);
+    fetchFreshData();
+  };
+
+  // Load data on mount - try cache first
+  useEffect(() => {
+    const cached = loadFromCache();
+
+    if (cached && cached.matches.length > 0) {
+      // Use cached data
+      console.log('Loaded from cache:', {
+        matches: cached.matches.length,
+        lastUpdated: new Date(cached.lastUpdated).toLocaleString(),
+      });
+      setMatches(cached.matches);
+      setPlayers(cached.players);
+      setLastUpdated(cached.lastUpdated);
+      setLoading(false);
+    } else {
+      // No cache, fetch fresh
+      fetchFreshData();
+    }
   }, []);
 
   const togglePartySize = (size) => {
@@ -881,14 +965,52 @@ export default function BoyStats() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
-      <header className="border-b-2 border-slate-800 bg-slate-900 sticky top-0 z-50">
+      {/* Refresh progress bar */}
+      {refreshing && (
+        <div className="fixed top-0 left-0 right-0 z-[100] bg-slate-900 border-b border-emerald-700">
+          <div className="max-w-7xl mx-auto px-4 py-2">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin text-lg">🔄</div>
+              <div className="flex-1">
+                <p className="text-emerald-400 text-sm font-bold">{loadingMessage}</p>
+                <p className="text-slate-400 text-xs">{loadingSubMessage}</p>
+              </div>
+              <div className="w-32">
+                <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(loadingProgress, 100)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <header className={`border-b-2 border-slate-800 bg-slate-900 sticky top-0 z-50 ${refreshing ? 'mt-12' : ''}`}>
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="text-5xl">🎮</div>
               <div>
                 <h1 className="text-3xl md:text-4xl font-black text-amber-400">BOYSTATS</h1>
-                <p className="text-slate-400 text-sm">{matches.length} Matches • {filteredMatches.length} Filtered</p>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-slate-400">{matches.length} Matches • {filteredMatches.length} Filtered</span>
+                  {lastUpdated && (
+                    <span className="text-slate-500">• Updated {formatLastUpdated(lastUpdated)}</span>
+                  )}
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold border transition-all ${
+                      refreshing
+                        ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
+                        : 'bg-emerald-900 border-emerald-700 text-emerald-300 hover:bg-emerald-800'
+                    }`}
+                  >
+                    {refreshing ? '...' : 'Refresh'}
+                  </button>
+                </div>
               </div>
             </div>
             <div className="flex gap-2">
