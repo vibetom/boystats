@@ -226,49 +226,225 @@ function generatePlayerTags(name, stats) {
 
 function generateMatchInsights(match) {
   const boys = match.participants.filter(p => p.isBoy);
-  const tags = [];
+  const priorityTags = []; // Always show these
+  const normalTags = [];   // Show if room
+  const lowPriorityTags = []; // Only if nothing else
 
   if (boys.length === 0) return { tags: [], insights: [] };
 
   const didWin = boys[0]?.win;
   const teamId = boys[0]?.teamId;
-  const teamKills = match.participants.filter(p => p.teamId === teamId).reduce((sum, p) => sum + p.kills, 0);
+  const ourTeam = match.participants.filter(p => p.teamId === teamId);
+  const enemyTeam = match.participants.filter(p => p.teamId !== teamId);
+  const teamKills = ourTeam.reduce((sum, p) => sum + p.kills, 0);
+  const teamDamage = ourTeam.reduce((sum, p) => sum + (p.totalDamageDealtToChampions || 0), 0);
+  const gameDurationMins = match.gameDuration / 60;
 
-  const boysByKDA = boys
-    .map(p => ({
-      ...p,
-      name: p.boyName || p.riotIdGameName,
-      kda: (p.kills + p.assists) / Math.max(p.deaths, 1),
-      kp: teamKills > 0 ? (p.kills + p.assists) / teamKills : 0
-    }))
-    .sort((a, b) => b.kda - a.kda);
+  // Calculate stats for each boy
+  const boysWithStats = boys.map(p => ({
+    ...p,
+    name: p.boyName || p.riotIdGameName,
+    kda: (p.kills + p.assists) / Math.max(p.deaths, 1),
+    kp: teamKills > 0 ? (p.kills + p.assists) / teamKills : 0,
+    dmgShare: teamDamage > 0 ? (p.totalDamageDealtToChampions || 0) / teamDamage : 0,
+    csPerMin: gameDurationMins > 0 ? ((p.totalMinionsKilled || 0) + (p.neutralMinionsKilled || 0)) / gameDurationMins : 0,
+  }));
 
-  if (boysByKDA.length > 0 && boysByKDA[0].kda >= 3 && boysByKDA[0].kp > 0.2) {
-    tags.push({ label: 'MVP', player: boysByKDA[0].name, color: 'amber', icon: '👑' });
+  // Track if player has a "positive" tag (for Rough Game exclusion)
+  const playersWithPositiveTags = new Set();
+
+  // === PRIORITY TAGS (Always show if applicable) ===
+
+  // MVP - best KDA with decent participation
+  const sortedByKDA = [...boysWithStats].sort((a, b) => b.kda - a.kda);
+  if (sortedByKDA.length > 0 && sortedByKDA[0].kda >= 2.5 && sortedByKDA[0].kp > 0.25) {
+    priorityTags.push({ label: 'MVP', player: sortedByKDA[0].name, color: 'amber', icon: '👑' });
+    playersWithPositiveTags.add(sortedByKDA[0].name);
   }
 
+  // Multi-kills (always show)
   boys.forEach(p => {
     const name = p.boyName || p.riotIdGameName;
-    if (p.pentaKills > 0) tags.push({ label: 'PENTAKILL', player: name, color: 'amber', icon: '🏆' });
-    else if (p.quadraKills > 0) tags.push({ label: 'Quadra', player: name, color: 'purple', icon: '💎' });
-    else if (p.tripleKills > 0) tags.push({ label: 'Triple', player: name, color: 'blue', icon: '🔥' });
-
-    if (p.deaths === 0 && didWin && p.kills + p.assists >= 5) {
-      tags.push({ label: 'Perfect', player: name, color: 'cyan', icon: '✨' });
+    if (p.pentaKills > 0) {
+      priorityTags.push({ label: 'PENTAKILL', player: name, color: 'amber', icon: '🏆' });
+      playersWithPositiveTags.add(name);
     }
-    if (p.firstBloodKill) tags.push({ label: 'First Blood', player: name, color: 'red', icon: '🩸' });
-    if (p.kills >= 12) tags.push({ label: 'Kill Leader', player: name, color: 'red', icon: '⚔️' });
-    if (p.deaths >= 10) tags.push({ label: 'Rough Game', player: name, color: 'red', icon: '💀' });
+    if (p.quadraKills > 0) {
+      priorityTags.push({ label: 'Quadra', player: name, color: 'purple', icon: '💎' });
+      playersWithPositiveTags.add(name);
+    }
+    if (p.tripleKills > 0) {
+      priorityTags.push({ label: 'Triple', player: name, color: 'blue', icon: '🔥' });
+      playersWithPositiveTags.add(name);
+    }
   });
 
-  if (boys.length === 5) tags.push({ label: 'Full Squad', color: 'amber', icon: '👥' });
-  else if (boys.length === 1) tags.push({ label: 'Solo Queue', color: 'slate', icon: '🎮' });
+  // Perfect game (always show)
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if (p.deaths === 0 && (p.kills + p.assists) >= 5) {
+      priorityTags.push({ label: 'Perfect', player: name, color: 'cyan', icon: '✨' });
+      playersWithPositiveTags.add(name);
+    }
+  });
 
+  // === NORMAL TAGS ===
+
+  // Kill Leader - only ONE person, must have most kills among boys
+  const sortedByKills = [...boysWithStats].sort((a, b) => b.kills - a.kills);
+  if (sortedByKills.length > 0 && sortedByKills[0].kills >= 8) {
+    // Only give if they have significantly more than others or are the clear leader
+    const leader = sortedByKills[0];
+    const secondMost = sortedByKills[1]?.kills || 0;
+    if (leader.kills > secondMost || sortedByKills.length === 1) {
+      normalTags.push({ label: 'Kill Leader', player: leader.name, color: 'red', icon: '⚔️' });
+      playersWithPositiveTags.add(leader.name);
+    }
+  }
+
+  // Damage Carry - highest damage share
+  const sortedByDmg = [...boysWithStats].sort((a, b) => b.dmgShare - a.dmgShare);
+  if (sortedByDmg.length > 0 && sortedByDmg[0].dmgShare >= 0.35) {
+    normalTags.push({ label: 'Damage Carry', player: sortedByDmg[0].name, color: 'orange', icon: '💥' });
+    playersWithPositiveTags.add(sortedByDmg[0].name);
+  }
+
+  // Tank/Frontline - took a lot of damage
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if ((p.totalDamageTaken || 0) >= 40000) {
+      normalTags.push({ label: 'Frontline', player: name, color: 'blue', icon: '🛡️' });
+      playersWithPositiveTags.add(name);
+    }
+  });
+
+  // Vision MVP - high vision score
+  const sortedByVision = [...boysWithStats].sort((a, b) => (b.visionScore || 0) - (a.visionScore || 0));
+  if (sortedByVision.length > 0 && (sortedByVision[0].visionScore || 0) >= 50) {
+    normalTags.push({ label: 'Vision King', player: sortedByVision[0].name, color: 'purple', icon: '👁️' });
+  }
+
+  // Farm God - high CS/min
+  boysWithStats.forEach(p => {
+    if (p.csPerMin >= 8 && match.queueId !== 450) { // Not ARAM
+      normalTags.push({ label: 'Farm God', player: p.name, color: 'yellow', icon: '🌾' });
+    }
+  });
+
+  // Assist King - lots of assists
+  const sortedByAssists = [...boysWithStats].sort((a, b) => b.assists - a.assists);
+  if (sortedByAssists.length > 0 && sortedByAssists[0].assists >= 15) {
+    normalTags.push({ label: 'Assist King', player: sortedByAssists[0].name, color: 'emerald', icon: '🤝' });
+    playersWithPositiveTags.add(sortedByAssists[0].name);
+  }
+
+  // CC Machine - lots of CC
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if ((p.timeCCingOthers || 0) >= 60) {
+      normalTags.push({ label: 'CC Machine', player: name, color: 'purple', icon: '⛓️' });
+    }
+  });
+
+  // Healer/Support carry
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    const healShield = (p.totalHealsOnTeammates || 0) + (p.totalDamageShieldedOnTeammates || 0);
+    if (healShield >= 10000) {
+      normalTags.push({ label: 'Guardian', player: name, color: 'pink', icon: '💗' });
+    }
+  });
+
+  // Solo Killer - lots of 1v1s
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if (p.challenges?.soloKills >= 5) {
+      normalTags.push({ label: 'Duelist', player: name, color: 'red', icon: '🗡️' });
+      playersWithPositiveTags.add(name);
+    }
+  });
+
+  // Killing Spree
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if ((p.largestKillingSpree || 0) >= 7) {
+      normalTags.push({ label: 'Unstoppable', player: name, color: 'orange', icon: '🔥' });
+      playersWithPositiveTags.add(name);
+    }
+  });
+
+  // Comeback king
+  if (didWin && boys.some(p => p.challenges?.hadOpenNexus)) {
+    normalTags.push({ label: 'Comeback', color: 'emerald', icon: '🔄' });
+  }
+
+  // Stomp/Dominated
+  if (didWin && gameDurationMins < 25 && teamKills >= 30) {
+    normalTags.push({ label: 'Stomp', color: 'emerald', icon: '👊' });
+  }
+
+  // Close Game
+  if (gameDurationMins >= 35) {
+    normalTags.push({ label: 'Marathon', color: 'slate', icon: '⏱️' });
+  }
+
+  // Surrender
+  if (match.participants.some(p => p.gameEndedInSurrender)) {
+    if (didWin) {
+      normalTags.push({ label: 'FF@15', color: 'emerald', icon: '🏳️' });
+    }
+  }
+
+  // === NEGATIVE TAGS (Only show if player doesn't have positive tags) ===
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if (p.deaths >= 10 && !playersWithPositiveTags.has(name)) {
+      normalTags.push({ label: 'Rough Game', player: name, color: 'red', icon: '💀' });
+    }
+    if (p.deaths >= 8 && p.kills <= 2 && !playersWithPositiveTags.has(name)) {
+      normalTags.push({ label: 'Struggle Bus', player: name, color: 'red', icon: '🚌' });
+    }
+  });
+
+  // Inted (very bad game, only if no positive tags)
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    const kda = (p.kills + p.assists) / Math.max(p.deaths, 1);
+    if (kda < 0.5 && p.deaths >= 8 && !playersWithPositiveTags.has(name)) {
+      normalTags.push({ label: 'Oops', player: name, color: 'red', icon: '😬' });
+    }
+  });
+
+  // === LOW PRIORITY TAGS ===
+
+  // First Blood (low priority)
+  boys.forEach(p => {
+    const name = p.boyName || p.riotIdGameName;
+    if (p.firstBloodKill) {
+      lowPriorityTags.push({ label: 'First Blood', player: name, color: 'red', icon: '🩸' });
+    }
+  });
+
+  // Squad size tags (low priority)
+  if (boys.length === 5) lowPriorityTags.push({ label: 'Full Squad', color: 'amber', icon: '👥' });
+  else if (boys.length === 4) lowPriorityTags.push({ label: '4-Stack', color: 'blue', icon: '👥' });
+  else if (boys.length === 1) lowPriorityTags.push({ label: 'Solo Queue', color: 'slate', icon: '🎮' });
+
+  // Combine tags with priority
+  const allTags = [...priorityTags, ...normalTags, ...lowPriorityTags];
+
+  // Remove duplicates
   const uniqueTags = [];
   const seen = new Set();
-  tags.forEach(t => { if (!seen.has(t.label + (t.player || ''))) { seen.add(t.label + (t.player || '')); uniqueTags.push(t); } });
+  allTags.forEach(t => {
+    const key = t.label + (t.player || '');
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueTags.push(t);
+    }
+  });
 
-  return { tags: uniqueTags.slice(0, 6), insights: [] };
+  return { tags: uniqueTags.slice(0, 8), insights: [] };
 }
 
 // ============================================================================
