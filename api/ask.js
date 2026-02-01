@@ -32,36 +32,48 @@ export default async function handler(req, res) {
     // Build context from stats and matches
     const context = buildContext(stats, matches);
 
-    const systemPrompt = `You are BoyStats AI, a statistics analyst for a League of Legends friend group called "The Boys". Your primary job is to provide accurate, data-driven insights based on the match history and statistics provided.
+    const systemPrompt = `You are BoyStats AI, a statistics analyst for a League of Legends friend group called "The Boys". You have access to their COMPLETE match history dataset.
 
-CORE PRINCIPLES:
-1. Statistical accuracy is your top priority - always cite specific numbers from the data
-2. Base all conclusions on the actual data provided
-3. If the data doesn't support an answer, say so clearly and ask for clarification
-4. Compare stats meaningfully (win rates, KDA, damage, kill participation, etc.)
+CRITICAL: You have the FULL raw match data as JSON. You can answer ANY question by analyzing this data directly. Do not say data is missing - compute it from the raw matches.
+
+CAPABILITIES:
+- Calculate any statistic by processing the match JSON
+- Find specific games (by champion, date, queue type, outcome)
+- Compare players across any metric
+- Identify trends, patterns, streaks
+- Analyze champion performance, role distribution, duo synergies
+- Find records (highest damage, most kills, longest game, etc.)
+
+HOW TO ANSWER:
+1. Parse the JSON match data to find relevant matches
+2. Compute the requested statistics
+3. Cite specific numbers and examples
+4. Be precise - show your calculations when helpful
 
 TONE:
-- Professional but friendly - you're helping friends understand their stats
-- A light touch of wit is fine, but substance over style
-- Keep responses focused and clear
-- Use gaming terms naturally but don't overdo slang
+- Accurate and data-driven first
+- Friendly but professional
+- Use gaming terms naturally
+- Keep responses focused
 
-The players in "The Boys" are:
+The players ("The Boys"):
 - SomeBees
 - BananaJamHands
 - Storklord
 - pRiNcEsSFiStY
 - Alessio
 
-KEY METRICS TO ANALYZE:
-- Win rate and recent trends
-- KDA (kills + assists / deaths)
-- Kill participation percentage
-- Damage output relative to team
-- Champion performance and preferences
-- Duo synergies based on games played together
+QUEUE TYPES: 420=Ranked Solo, 440=Ranked Flex, 400=Normal Draft, 450=ARAM
 
-IMPORTANT: If asked about something not in the provided data, politely explain what information is missing and ask the user to clarify their question. Do not make up statistics or speculate wildly.`;
+You can answer questions like:
+- "What's Storklord's win rate on Jinx in ranked?"
+- "Who has the most pentakills?"
+- "What duo has the best synergy?"
+- "Show me games where someone had 20+ kills"
+- "What's our ARAM win rate vs ranked?"
+- "Who carries hardest in losses?"
+
+Analyze the raw data to answer accurately.`;
 
     const userMessage = `Here's the current stats and match data for The Boys:
 
@@ -144,73 +156,84 @@ User's question: ${question}`;
 function buildContext(stats, matches) {
   let context = '';
 
-  // Add player stats summary
+  // Data Dictionary - explain what each field means
+  context += `## DATA DICTIONARY
+
+You have access to the COMPLETE match history dataset. Here's what each field means:
+
+### Match Fields:
+- matchId: Unique identifier for the match
+- gameCreation: Unix timestamp (milliseconds) when the game started
+- gameDuration: Game length in seconds
+- gameMode: e.g., "CLASSIC", "ARAM"
+- queueId: 420=Ranked Solo, 440=Ranked Flex, 400=Normal Draft, 450=ARAM
+
+### Participant Fields (each match has 10 participants):
+- puuid: Player's unique ID
+- isBoy: true if this is one of "The Boys"
+- boyName: The player's name if isBoy is true
+- riotIdGameName: In-game name
+- championName: Champion played
+- teamId: 100=Blue side, 200=Red side
+- teamPosition: TOP, JUNGLE, MIDDLE, BOTTOM (ADC), UTILITY (Support)
+- win: true/false
+- kills, deaths, assists: K/D/A stats
+- totalMinionsKilled: Lane minion CS
+- neutralMinionsKilled: Jungle monster CS
+- goldEarned: Total gold
+- totalDamageDealtToChampions: Damage to enemy champions
+- totalDamageTaken: Damage received
+- visionScore: Ward/vision contribution
+- timeCCingOthers: Seconds of CC applied to enemies
+- totalHealsOnTeammates: Healing done to allies
+- totalDamageShieldedOnTeammates: Shielding done to allies
+- doubleKills, tripleKills, quadraKills, pentaKills: Multi-kill counts
+- firstBloodKill: true if got first blood
+- largestKillingSpree: Highest killstreak in the game
+- gameEndedInSurrender: true if the game ended in surrender
+- challenges.soloKills: 1v1 kills
+- challenges.hadOpenNexus: true if enemy nexus was exposed (comeback potential)
+
+## THE BOYS (the 5 players we're tracking):
+- SomeBees
+- BananaJamHands
+- Storklord
+- pRiNcEsSFiStY
+- Alessio
+
+`;
+
+  // Add computed stats summary for quick reference
   if (stats?.players) {
-    context += '## Player Statistics (filtered view)\n\n';
+    context += '## COMPUTED STATS SUMMARY (for quick reference)\n\n';
     for (const [name, s] of Object.entries(stats.players)) {
       if (s.games === 0) continue;
       const kda = ((s.kills + s.assists) / Math.max(s.deaths, 1)).toFixed(2);
-      const wr = ((s.wins / s.games) * 100).toFixed(0);
-      const avgKP = ((s.totalKP / s.games) * 100).toFixed(0);
-      const avgDmg = Math.round(s.damage / s.games);
-
-      context += `**${name}**: ${s.games} games, ${wr}% WR, ${kda} KDA, ${avgKP}% KP, ${avgDmg} avg dmg\n`;
-      context += `  Kills: ${s.kills}, Deaths: ${s.deaths}, Assists: ${s.assists}\n`;
-      context += `  Pentas: ${s.pentas}, Quadras: ${s.quadras}, First Bloods: ${s.firstBloods}\n`;
-
-      // Top champions
-      const topChamps = Object.entries(s.champions || {})
-        .sort((a, b) => b[1].games - a[1].games)
-        .slice(0, 3)
-        .map(([champ, data]) => `${champ}(${data.games}g, ${((data.wins/data.games)*100).toFixed(0)}%)`);
-      if (topChamps.length > 0) {
-        context += `  Top champs: ${topChamps.join(', ')}\n`;
-      }
-      context += '\n';
-    }
-  }
-
-  // Add duo stats
-  if (stats?.duos) {
-    context += '## Duo Statistics\n\n';
-    const sortedDuos = Object.entries(stats.duos)
-      .filter(([, d]) => d.games >= 2)
-      .sort((a, b) => b[1].games - a[1].games)
-      .slice(0, 10);
-
-    for (const [key, duo] of sortedDuos) {
-      const wr = ((duo.wins / duo.games) * 100).toFixed(0);
-      context += `${duo.players.join(' + ')}: ${duo.games} games, ${wr}% WR\n`;
+      const wr = ((s.wins / s.games) * 100).toFixed(1);
+      context += `${name}: ${s.games}g, ${wr}%WR, ${kda}KDA, ${s.kills}K/${s.deaths}D/${s.assists}A, ${s.pentas}penta, ${s.quadras}quadra\n`;
     }
     context += '\n';
   }
 
-  // Add overall stats
-  if (stats?.totalGames) {
-    const overallWR = ((stats.totalWins / stats.totalGames) * 100).toFixed(0);
-    context += `## Overall: ${stats.totalGames} games, ${stats.totalWins} wins (${overallWR}% WR)\n\n`;
+  if (stats?.duos) {
+    context += '## DUO SYNERGIES\n';
+    const sortedDuos = Object.entries(stats.duos)
+      .filter(([, d]) => d.games >= 2)
+      .sort((a, b) => b[1].games - a[1].games);
+    for (const [, duo] of sortedDuos) {
+      const wr = ((duo.wins / duo.games) * 100).toFixed(0);
+      context += `${duo.players.join('+')}:${duo.games}g,${wr}%\n`;
+    }
+    context += '\n';
   }
 
-  // Add recent matches summary (last 10)
+  // Add FULL match data as JSON
   if (matches && matches.length > 0) {
-    context += '## Recent Matches (last 10)\n\n';
-    const recentMatches = matches.slice(0, 10);
-
-    for (const match of recentMatches) {
-      const boys = match.participants?.filter(p => p.isBoy) || [];
-      if (boys.length === 0) continue;
-
-      const didWin = boys[0]?.win ? 'WIN' : 'LOSS';
-      const date = new Date(match.gameCreation).toLocaleDateString();
-      const duration = Math.floor(match.gameDuration / 60);
-
-      const boySummaries = boys.map(p => {
-        const name = p.boyName || p.riotIdGameName;
-        return `${name}(${p.championName} ${p.kills}/${p.deaths}/${p.assists})`;
-      }).join(', ');
-
-      context += `${date} - ${didWin} (${duration}min): ${boySummaries}\n`;
-    }
+    context += `## COMPLETE MATCH DATA (${matches.length} matches)\n\n`;
+    context += `Below is the full JSON dataset. Use this to answer ANY question about the match history.\n\n`;
+    context += '```json\n';
+    context += JSON.stringify(matches, null, 0); // Compact JSON to save tokens
+    context += '\n```\n';
   }
 
   return context;
