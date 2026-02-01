@@ -622,18 +622,23 @@ function LoadingScreen({ message, progress, subMessage }) {
 
 // Cache keys for localStorage
 const CACHE_KEY_MATCHES = 'boystats_matches';
+const CACHE_KEY_MATCH_IDS = 'boystats_matchIds';
 const CACHE_KEY_PLAYERS = 'boystats_players';
 const CACHE_KEY_TIMESTAMP = 'boystats_lastUpdated';
+const CACHE_KEY_BACKUPS = 'boystats_backups';
+const MAX_BACKUPS = 3;
 
 function loadFromCache() {
   try {
     const matchesJson = localStorage.getItem(CACHE_KEY_MATCHES);
+    const matchIdsJson = localStorage.getItem(CACHE_KEY_MATCH_IDS);
     const playersJson = localStorage.getItem(CACHE_KEY_PLAYERS);
     const timestamp = localStorage.getItem(CACHE_KEY_TIMESTAMP);
 
     if (matchesJson && playersJson && timestamp) {
       return {
         matches: JSON.parse(matchesJson),
+        matchIds: matchIdsJson ? JSON.parse(matchIdsJson) : [],
         players: JSON.parse(playersJson),
         lastUpdated: parseInt(timestamp),
       };
@@ -644,13 +649,83 @@ function loadFromCache() {
   return null;
 }
 
-function saveToCache(matches, players) {
+function saveToCache(matches, matchIds, players) {
   try {
     localStorage.setItem(CACHE_KEY_MATCHES, JSON.stringify(matches));
+    localStorage.setItem(CACHE_KEY_MATCH_IDS, JSON.stringify(matchIds));
     localStorage.setItem(CACHE_KEY_PLAYERS, JSON.stringify(players));
     localStorage.setItem(CACHE_KEY_TIMESTAMP, Date.now().toString());
   } catch (err) {
     console.error('Failed to save to cache:', err);
+  }
+}
+
+function createBackup() {
+  try {
+    const matchesJson = localStorage.getItem(CACHE_KEY_MATCHES);
+    const matchIdsJson = localStorage.getItem(CACHE_KEY_MATCH_IDS);
+    const playersJson = localStorage.getItem(CACHE_KEY_PLAYERS);
+    const timestamp = localStorage.getItem(CACHE_KEY_TIMESTAMP);
+
+    if (!matchesJson) return null;
+
+    const backupsJson = localStorage.getItem(CACHE_KEY_BACKUPS);
+    const backups = backupsJson ? JSON.parse(backupsJson) : [];
+
+    const newBackup = {
+      id: Date.now(),
+      timestamp: parseInt(timestamp) || Date.now(),
+      matches: matchesJson,
+      matchIds: matchIdsJson,
+      players: playersJson,
+      matchCount: JSON.parse(matchesJson).length,
+    };
+
+    backups.unshift(newBackup);
+    // Keep only last N backups
+    while (backups.length > MAX_BACKUPS) {
+      backups.pop();
+    }
+
+    localStorage.setItem(CACHE_KEY_BACKUPS, JSON.stringify(backups));
+    return newBackup.id;
+  } catch (err) {
+    console.error('Failed to create backup:', err);
+    return null;
+  }
+}
+
+function getBackups() {
+  try {
+    const backupsJson = localStorage.getItem(CACHE_KEY_BACKUPS);
+    if (!backupsJson) return [];
+    const backups = JSON.parse(backupsJson);
+    return backups.map(b => ({
+      id: b.id,
+      timestamp: b.timestamp,
+      matchCount: b.matchCount,
+    }));
+  } catch (err) {
+    return [];
+  }
+}
+
+function restoreBackup(backupId) {
+  try {
+    const backupsJson = localStorage.getItem(CACHE_KEY_BACKUPS);
+    if (!backupsJson) return false;
+    const backups = JSON.parse(backupsJson);
+    const backup = backups.find(b => b.id === backupId);
+    if (!backup) return false;
+
+    localStorage.setItem(CACHE_KEY_MATCHES, backup.matches);
+    localStorage.setItem(CACHE_KEY_MATCH_IDS, backup.matchIds || '[]');
+    localStorage.setItem(CACHE_KEY_PLAYERS, backup.players);
+    localStorage.setItem(CACHE_KEY_TIMESTAMP, backup.timestamp.toString());
+    return true;
+  } catch (err) {
+    console.error('Failed to restore backup:', err);
+    return false;
   }
 }
 
@@ -670,8 +745,13 @@ function formatLastUpdated(timestamp) {
   return date.toLocaleDateString();
 }
 
+function formatBackupDate(timestamp) {
+  return new Date(timestamp).toLocaleString();
+}
+
 export default function BoyStats() {
   const [matches, setMatches] = useState([]);
+  const [cachedMatchIds, setCachedMatchIds] = useState(new Set());
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -680,6 +760,7 @@ export default function BoyStats() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [backups, setBackups] = useState([]);
 
   const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
   const [queueFilter, setQueueFilter] = useState(new Set(['420', '440', '400'])); // Solo, Flex, Normal by default
@@ -688,8 +769,8 @@ export default function BoyStats() {
   const [timeFilter, setTimeFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('dashboard');
 
-  // Fetch fresh data from API
-  const fetchFreshData = async () => {
+  // Fetch data from API - supports incremental mode
+  const fetchData = async (incrementalMode = true, existingMatches = [], existingMatchIds = new Set()) => {
     try {
       // Check server health
       setLoadingMessage('Checking server...');
@@ -709,9 +790,9 @@ export default function BoyStats() {
       const playersData = await playersRes.json();
       setPlayers(playersData);
 
-      // Phase 1: Fetch all match IDs (fast)
-      setLoadingMessage('Finding all matches...');
-      setLoadingSubMessage('This fetches match IDs from the Riot API');
+      // Phase 1: Fetch all match IDs
+      setLoadingMessage('Finding matches...');
+      setLoadingSubMessage(incrementalMode ? 'Looking for new matches...' : 'Full refresh - fetching all match IDs...');
       setLoadingProgress(5);
 
       const matchIdsRes = await fetch(`${API_BASE}/match-ids?queues=420,440,400,450&pages=10`);
@@ -724,33 +805,35 @@ export default function BoyStats() {
       const allMatchIds = matchIdsData.matchIds || [];
       const playerMap = matchIdsData.players || {};
 
-      // Debug: verify player map has data
-      console.log('Player map received:', {
-        playerCount: Object.keys(playerMap).length,
-        players: Object.keys(playerMap),
-        samplePuuid: Object.values(playerMap)[0]?.substring(0, 20) + '...',
-      });
+      console.log('Match IDs from API:', allMatchIds.length);
 
-      if (allMatchIds.length === 0) {
-        setMatches([]);
+      // In incremental mode, filter to only new IDs
+      let idsToFetch = allMatchIds;
+      if (incrementalMode && existingMatchIds.size > 0) {
+        idsToFetch = allMatchIds.filter(id => !existingMatchIds.has(id));
+        console.log('New match IDs to fetch:', idsToFetch.length);
+      }
+
+      if (idsToFetch.length === 0) {
+        setLoadingMessage('No new matches found');
+        setLoadingSubMessage('Your data is up to date!');
         setLoading(false);
         setRefreshing(false);
         return;
       }
 
       setLoadingProgress(15);
-      setLoadingMessage(`Found ${allMatchIds.length} matches`);
-      setLoadingSubMessage('Now fetching match details...');
+      setLoadingMessage(`Found ${idsToFetch.length} ${incrementalMode ? 'new ' : ''}matches`);
+      setLoadingSubMessage('Fetching match details (this may take a while)...');
 
-      // Phase 2: Fetch match details in batches
-      // Smaller batches (10) with rate limiting to avoid Riot API limits
-      const BATCH_SIZE = 10;
-      const allMatches = [];
+      // Phase 2: Fetch match details in smaller batches with conservative rate limiting
+      const BATCH_SIZE = 5; // Smaller batches
+      const allNewMatches = [];
       let processed = 0;
       let failedBatches = 0;
 
-      for (let i = 0; i < allMatchIds.length; i += BATCH_SIZE) {
-        const batchIds = allMatchIds.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < idsToFetch.length; i += BATCH_SIZE) {
+        const batchIds = idsToFetch.slice(i, i + BATCH_SIZE);
 
         try {
           const detailsRes = await fetch(`${API_BASE}/match-details`, {
@@ -769,97 +852,137 @@ export default function BoyStats() {
             continue;
           }
 
-            const detailsData = await detailsRes.json();
+          const detailsData = await detailsRes.json();
 
-            if (detailsData.error) {
-              console.error('Batch error from API:', detailsData.error);
-              failedBatches++;
-            }
-
-            // Debug logging - log EVERY batch
-            const batchNum = Math.floor(i/BATCH_SIZE) + 1;
-            console.log(`Batch ${batchNum}:`, {
-              processed: detailsData.processed,
-              matchesFound: detailsData.matches?.length || 0,
-              skippedNoboys: detailsData.skippedNoboys || 0,
-              rateLimitHits: detailsData.rateLimitHits || 0,
-              totalLoadedSoFar: allMatches.length + (detailsData.matches?.length || 0),
-            });
-
-            // If this batch had skipped matches, log the debug info
-            if (detailsData.debugInfo) {
-              console.log(`Batch ${batchNum} PUUID mismatch debug:`, detailsData.debugInfo);
-            }
-
-            if (detailsData.matches && detailsData.matches.length > 0) {
-              allMatches.push(...detailsData.matches);
-              // Update matches incrementally so user sees progress
-              setMatches([...allMatches].sort((a, b) => b.gameCreation - a.gameCreation));
-            }
-
-            processed += batchIds.length;
-            const progress = 15 + (processed / allMatchIds.length) * 85;
-            setLoadingProgress(progress);
-            setLoadingMessage(`Loading matches...`);
-            const failedMsg = failedBatches > 0 ? ` (${failedBatches} batches failed)` : '';
-            setLoadingSubMessage(`${allMatches.length} matches loaded (${processed}/${allMatchIds.length} processed)${failedMsg}`);
-
-          } catch (batchErr) {
-            console.error('Batch fetch error:', batchErr);
+          if (detailsData.error) {
+            console.error('Batch error from API:', detailsData.error);
             failedBatches++;
-            processed += batchIds.length;
-            // Continue with next batch on error
           }
 
-          // Longer delay between batches to respect Riot API rate limits
-          if (i + BATCH_SIZE < allMatchIds.length) {
-            await new Promise(r => setTimeout(r, 500));
+          const batchNum = Math.floor(i/BATCH_SIZE) + 1;
+          console.log(`Batch ${batchNum}:`, {
+            processed: detailsData.processed,
+            matchesFound: detailsData.matches?.length || 0,
+          });
+
+          if (detailsData.matches && detailsData.matches.length > 0) {
+            allNewMatches.push(...detailsData.matches);
           }
+
+          processed += batchIds.length;
+          const progress = 15 + (processed / idsToFetch.length) * 85;
+          setLoadingProgress(progress);
+          setLoadingMessage(`Loading matches...`);
+          const failedMsg = failedBatches > 0 ? ` (${failedBatches} batches need retry)` : '';
+          setLoadingSubMessage(`${allNewMatches.length} new matches loaded (${processed}/${idsToFetch.length})${failedMsg}`);
+
+        } catch (batchErr) {
+          console.error('Batch fetch error:', batchErr);
+          failedBatches++;
+          processed += batchIds.length;
         }
 
-        // Final sort and save
-        allMatches.sort((a, b) => b.gameCreation - a.gameCreation);
-        setMatches(allMatches);
-
-        // Save to cache
-        saveToCache(allMatches, playersData);
-        setLastUpdated(Date.now());
-
-        setLoading(false);
-        setRefreshing(false);
-
-      } catch (err) {
-        console.error('Error fetching data:', err);
-        setError(`Failed to connect to server: ${err.message}. Make sure the backend is running.`);
-        setLoading(false);
-        setRefreshing(false);
+        // More conservative delay - 1 second between batches
+        if (i + BATCH_SIZE < idsToFetch.length) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
       }
-    };
 
-  // Handle refresh button click
+      // Combine with existing matches (in incremental mode)
+      let finalMatches;
+      let finalMatchIds;
+      if (incrementalMode) {
+        finalMatches = [...allNewMatches, ...existingMatches];
+        finalMatchIds = new Set([...idsToFetch.filter(id => allNewMatches.some(m => m.matchId === id)), ...existingMatchIds]);
+      } else {
+        finalMatches = allNewMatches;
+        finalMatchIds = new Set(allNewMatches.map(m => m.matchId));
+      }
+
+      // Sort by date
+      finalMatches.sort((a, b) => b.gameCreation - a.gameCreation);
+      setMatches(finalMatches);
+      setCachedMatchIds(finalMatchIds);
+
+      // Save to cache
+      saveToCache(finalMatches, Array.from(finalMatchIds), playersData);
+      setLastUpdated(Date.now());
+      setBackups(getBackups());
+
+      setLoading(false);
+      setRefreshing(false);
+
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError(`Failed to connect to server: ${err.message}. Make sure the backend is running.`);
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  // Handle incremental refresh - only fetch new matches
   const handleRefresh = () => {
     setRefreshing(true);
     setLoadingProgress(0);
-    fetchFreshData();
+    fetchData(true, matches, cachedMatchIds);
+  };
+
+  // Handle full refresh with password protection
+  const handleFullRefresh = (password) => {
+    if (password !== 'boystats') {
+      alert('Incorrect password');
+      return false;
+    }
+
+    // Create backup before full refresh
+    const backupId = createBackup();
+    if (backupId) {
+      console.log('Created backup before full refresh:', backupId);
+    }
+
+    setRefreshing(true);
+    setLoadingProgress(0);
+    fetchData(false, [], new Set());
+    return true;
+  };
+
+  // Handle backup restore
+  const handleRestoreBackup = (backupId) => {
+    if (restoreBackup(backupId)) {
+      const cached = loadFromCache();
+      if (cached) {
+        setMatches(cached.matches);
+        setCachedMatchIds(new Set(cached.matchIds || []));
+        setPlayers(cached.players);
+        setLastUpdated(cached.lastUpdated);
+        setBackups(getBackups());
+        alert('Backup restored successfully!');
+      }
+    } else {
+      alert('Failed to restore backup');
+    }
   };
 
   // Load data on mount - try cache first
   useEffect(() => {
     const cached = loadFromCache();
+    setBackups(getBackups());
 
     if (cached && cached.matches.length > 0) {
       // Use cached data
       console.log('Loaded from cache:', {
         matches: cached.matches.length,
+        matchIds: cached.matchIds?.length || 0,
         lastUpdated: new Date(cached.lastUpdated).toLocaleString(),
       });
       setMatches(cached.matches);
+      setCachedMatchIds(new Set(cached.matchIds || []));
       setPlayers(cached.players);
       setLastUpdated(cached.lastUpdated);
       setLoading(false);
     } else {
-      // No cache, fetch fresh
-      fetchFreshData();
+      // No cache, do full fetch
+      fetchData(false, [], new Set());
     }
   }, []);
 
@@ -1007,8 +1130,24 @@ export default function BoyStats() {
                         ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
                         : 'bg-emerald-900 border-emerald-700 text-emerald-300 hover:bg-emerald-800'
                     }`}
+                    title="Fetch new matches only"
                   >
                     {refreshing ? '...' : 'Refresh'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const pw = prompt('Enter password for full refresh:');
+                      if (pw) handleFullRefresh(pw);
+                    }}
+                    disabled={refreshing}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold border transition-all ${
+                      refreshing
+                        ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
+                        : 'bg-amber-900 border-amber-700 text-amber-300 hover:bg-amber-800'
+                    }`}
+                    title="Full refresh - requires password, creates backup first"
+                  >
+                    🔒 Full
                   </button>
                 </div>
               </div>
@@ -1305,7 +1444,46 @@ export default function BoyStats() {
         )}
       </main>
 
-      <footer className="border-t-2 border-slate-800 mt-12">
+      {/* Backup Restore Section */}
+      {backups.length > 0 && (
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <details className="bg-slate-900 rounded-xl border border-slate-700">
+            <summary className="px-4 py-3 cursor-pointer text-slate-400 text-sm font-medium hover:text-slate-300">
+              📦 Data Backups ({backups.length})
+            </summary>
+            <div className="px-4 pb-4 pt-2 border-t border-slate-700">
+              <p className="text-xs text-slate-500 mb-3">
+                Backups are created automatically before full refreshes. Click to restore.
+              </p>
+              <div className="space-y-2">
+                {backups.map((backup) => (
+                  <div
+                    key={backup.id}
+                    className="flex items-center justify-between bg-slate-800 rounded-lg px-3 py-2"
+                  >
+                    <div>
+                      <span className="text-slate-300 text-sm">{formatBackupDate(backup.timestamp)}</span>
+                      <span className="text-slate-500 text-xs ml-2">({backup.matchCount} matches)</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Restore backup from ${formatBackupDate(backup.timestamp)}? This will replace your current data.`)) {
+                          handleRestoreBackup(backup.id);
+                        }
+                      }}
+                      className="px-3 py-1 bg-slate-700 border border-slate-600 rounded text-xs text-slate-300 hover:bg-slate-600"
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </details>
+        </div>
+      )}
+
+      <footer className="border-t-2 border-slate-800 mt-6">
         <div className="max-w-7xl mx-auto px-4 py-6 text-center">
           <p className="text-amber-400 font-bold">🎮 BOYSTATS</p>
           <p className="text-xs text-slate-500 mt-1">Built for The Boys • Powered by Riot Games API</p>

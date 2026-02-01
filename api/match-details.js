@@ -29,8 +29,9 @@ async function getMatchDetails(matchId) {
   return riotFetch(url);
 }
 
-// Helper to fetch with concurrency limit - reduced to 3 for rate limiting
-async function fetchWithConcurrency(items, fetchFn, concurrency = 3) {
+// Helper to fetch with very conservative rate limiting
+// Only 2 concurrent requests with 300ms delay between mini-batches
+async function fetchWithConcurrency(items, fetchFn, concurrency = 2) {
   const results = [];
   for (let i = 0; i < items.length; i += concurrency) {
     const batch = items.slice(i, i + concurrency);
@@ -38,7 +39,7 @@ async function fetchWithConcurrency(items, fetchFn, concurrency = 3) {
     results.push(...batchResults);
     // Longer delay between mini-batches to respect rate limits
     if (i + concurrency < items.length) {
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 300));
     }
   }
   return results;
@@ -74,8 +75,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'players map is required' });
     }
 
-    // Reduce batch size to 10 to respect rate limits
-    const batchIds = matchIds.slice(0, 10);
+    // Very small batch size for conservative rate limiting
+    const batchIds = matchIds.slice(0, 5);
     const puuids = Object.values(players);
 
     const matches = [];
