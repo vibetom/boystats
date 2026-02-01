@@ -761,6 +761,7 @@ async function loadFromCentralCache() {
 
 async function saveToCentralCache(matches, matchIds, players) {
   try {
+    console.log('Saving to central cache...', { matchCount: matches.length });
     const res = await fetch(`${API_BASE}/cache`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -771,15 +772,13 @@ async function saveToCentralCache(matches, matchIds, players) {
         timestamp: Date.now(),
       }),
     });
-    if (!res.ok) {
-      throw new Error(`Cache save failed: ${res.status}`);
-    }
     const result = await res.json();
-    console.log('Saved to central cache:', {
-      matchCount: result.matchCount,
-      size: result.size,
-    });
-    return true;
+    if (!res.ok) {
+      console.error('Central cache save failed:', res.status, result);
+      return false;
+    }
+    console.log('Central cache saved successfully:', result);
+    return result.success;
   } catch (err) {
     console.error('Failed to save to central cache:', err);
     return false;
