@@ -95,45 +95,64 @@ export default async function handler(req, res) {
     }
 
     // Fetch match IDs for all players and queues
-    // Strategy: fetch all queues for each player in parallel, then paginate
-    const allPlayerPromises = Object.entries(puuidMap).map(async ([name, puuid]) => {
-      const playerMatchIds = [];
+    // Strategy: fetch first page of ALL queues for ALL players in parallel first
+    // This ensures we get at least some data from every queue
+    const allPromises = [];
 
-      // Fetch each queue for this player
+    for (const [name, puuid] of Object.entries(puuidMap)) {
       for (const queue of queues) {
-        // Check time limit
-        if (Date.now() - startTime > 8500) {
-          debug.errors.push(`Time limit for ${name} at queue ${queue}`);
-          break;
-        }
+        // First page of each queue (most recent 100 matches)
+        allPromises.push(
+          getMatchIds(puuid, 0, 100, queue, matchStartTime)
+            .then(ids => ({ name, queue, page: 0, ids }))
+            .catch(err => ({ name, queue, page: 0, ids: [], error: err.message }))
+        );
+      }
+    }
 
-        for (let page = 0; page < pagesPerQueue; page++) {
-          try {
-            const ids = await getMatchIds(puuid, page * 100, 100, queue, matchStartTime);
-            playerMatchIds.push(...ids);
+    // Fetch all first pages in parallel
+    const firstPageResults = await Promise.all(allPromises);
 
-            // Track per-player-queue stats
-            const key = `${name}_q${queue}`;
-            debug.matchIdsPerPlayer[key] = (debug.matchIdsPerPlayer[key] || 0) + ids.length;
+    for (const result of firstPageResults) {
+      if (result.error) {
+        debug.errors.push(`${result.name} q${result.queue} p0: ${result.error}`);
+      } else {
+        result.ids.forEach(id => allMatchIds.add(id));
+        const key = `${result.name}_q${result.queue}`;
+        debug.matchIdsPerPlayer[key] = (debug.matchIdsPerPlayer[key] || 0) + result.ids.length;
+      }
+    }
 
-            // If we got fewer than 100, no more pages for this queue
-            if (ids.length < 100) break;
-          } catch (err) {
-            debug.errors.push(`${name} q${queue} p${page}: ${err.message}`);
-            break;
-          }
+    // If we have time left, fetch additional pages for queues that had 100 results
+    const needsMorePages = firstPageResults.filter(r => r.ids.length === 100 && !r.error);
+
+    for (let page = 1; page < pagesPerQueue && Date.now() - startTime < 50000; page++) {
+      if (needsMorePages.length === 0) break;
+
+      const pagePromises = needsMorePages.map(r =>
+        getMatchIds(puuidMap[r.name], page * 100, 100, r.queue, matchStartTime)
+          .then(ids => ({ name: r.name, queue: r.queue, page, ids }))
+          .catch(err => ({ name: r.name, queue: r.queue, page, ids: [], error: err.message }))
+      );
+
+      const pageResults = await Promise.all(pagePromises);
+
+      for (const result of pageResults) {
+        if (result.error) {
+          debug.errors.push(`${result.name} q${result.queue} p${result.page}: ${result.error}`);
+        } else {
+          result.ids.forEach(id => allMatchIds.add(id));
+          const key = `${result.name}_q${result.queue}`;
+          debug.matchIdsPerPlayer[key] = (debug.matchIdsPerPlayer[key] || 0) + result.ids.length;
         }
       }
 
-      return { name, matchIds: playerMatchIds };
-    });
-
-    // Run all player fetches in parallel
-    const results = await Promise.allSettled(allPlayerPromises);
-
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        result.value.matchIds.forEach(id => allMatchIds.add(id));
+      // Remove entries that returned fewer than 100 (no more pages)
+      for (let i = needsMorePages.length - 1; i >= 0; i--) {
+        const found = pageResults.find(r => r.name === needsMorePages[i].name && r.queue === needsMorePages[i].queue);
+        if (!found || found.ids.length < 100 || found.error) {
+          needsMorePages.splice(i, 1);
+        }
       }
     }
 
