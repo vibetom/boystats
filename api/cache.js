@@ -54,6 +54,32 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields: matches, players' });
       }
 
+      // Check existing cache - don't overwrite with less data
+      try {
+        const { blobs } = await list();
+        const existingBlob = blobs.find(b => b.pathname.includes(CACHE_BLOB_NAME));
+
+        if (existingBlob) {
+          const existingRes = await fetch(existingBlob.url);
+          if (existingRes.ok) {
+            const existingData = await existingRes.json();
+            const existingCount = existingData.matches?.length || 0;
+
+            if (matches.length < existingCount) {
+              console.log(`Skipping cache update: new data has ${matches.length} matches, existing has ${existingCount}`);
+              return res.json({
+                success: false,
+                reason: 'existing_cache_larger',
+                existingCount,
+                newCount: matches.length,
+              });
+            }
+          }
+        }
+      } catch (checkErr) {
+        console.log('Could not check existing cache:', checkErr.message);
+      }
+
       const cacheData = {
         matches,
         matchIds: matchIds || [],
