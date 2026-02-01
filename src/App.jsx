@@ -170,54 +170,189 @@ function calculateAllStats(matches, selectedPlayers) {
 // ============================================================================
 
 const TAG_DEFINITIONS = {
+  // KDA-based
   'KDA Demon': { icon: '😇', color: 'emerald', desc: 'Averaging 4+ KDA' },
   'Clean Player': { icon: '✨', color: 'cyan', desc: 'Solid 3+ KDA' },
   'Death Prone': { icon: '💀', color: 'red', desc: 'Below 1.5 KDA' },
+  'Unkillable': { icon: '🛡️', color: 'emerald', desc: 'Under 2.5 deaths per game' },
+
+  // Win rate
   'Winner': { icon: '🏆', color: 'amber', desc: '60%+ win rate' },
   'Climbing': { icon: '📈', color: 'emerald', desc: '55%+ win rate' },
   'Struggling': { icon: '📉', color: 'red', desc: 'Below 40% win rate' },
-  'Slayer': { icon: '⚔️', color: 'red', desc: '9+ kills per game' },
-  'Team Player': { icon: '🤝', color: 'blue', desc: '12+ assists per game' },
+  'Coin Flip': { icon: '🪙', color: 'slate', desc: 'Exactly 50% win rate' },
+
+  // Kills/Damage
+  'Slayer': { icon: '⚔️', color: 'red', desc: '8+ kills per game' },
+  'Assassin': { icon: '🗡️', color: 'purple', desc: 'High solo kills' },
   'Carry Potential': { icon: '💪', color: 'orange', desc: '30%+ of team damage' },
-  'Always Involved': { icon: '👑', color: 'amber', desc: '65%+ kill participation' },
-  'Vision God': { icon: '👁️', color: 'blue', desc: '50+ vision score per game' },
-  'Pentakill Legend': { icon: '🏆', color: 'amber', desc: 'Has scored pentakills' },
-  'Survivor': { icon: '🛡️', color: 'emerald', desc: 'Under 3 deaths per game' },
-  'Frontliner': { icon: '🛡️', color: 'blue', desc: 'Takes tons of damage' },
+  'Nuke': { icon: '💥', color: 'orange', desc: '25k+ avg damage' },
+  'Poke Lord': { icon: '🎯', color: 'blue', desc: 'Consistent damage dealer' },
+
+  // Assists/Team play
+  'Team Player': { icon: '🤝', color: 'blue', desc: '12+ assists per game' },
+  'Playmaker': { icon: '🎭', color: 'purple', desc: 'High kill participation with assists' },
+  'Always Involved': { icon: '👑', color: 'amber', desc: '70%+ kill participation' },
+  'Setup King': { icon: '🎬', color: 'blue', desc: 'More assists than kills' },
+
+  // Vision
+  'Vision God': { icon: '👁️', color: 'purple', desc: '50+ vision score per game' },
+  'Hawk Eye': { icon: '🦅', color: 'cyan', desc: '35+ vision score per game' },
+  'Blind': { icon: '🙈', color: 'red', desc: 'Under 15 vision score per game' },
+
+  // Tank/Frontline
+  'Frontliner': { icon: '🛡️', color: 'blue', desc: 'Takes 30k+ damage per game' },
+  'Meat Shield': { icon: '🥩', color: 'red', desc: 'Takes tons of damage for the team' },
+  'Raid Boss': { icon: '👹', color: 'purple', desc: 'Unkillable frontline presence' },
+
+  // Support/Utility
   'Guardian': { icon: '💗', color: 'pink', desc: 'High healing and shielding' },
+  'Protector': { icon: '🛡️', color: 'pink', desc: 'Shields teammates frequently' },
+  'Healer': { icon: '💚', color: 'emerald', desc: 'Keeps the team alive' },
+  'CC Bot': { icon: '⛓️', color: 'purple', desc: 'Lots of crowd control' },
+
+  // Farm/Economy
+  'Farm God': { icon: '🌾', color: 'yellow', desc: '7+ CS per minute' },
+  'Gold Efficient': { icon: '💰', color: 'amber', desc: 'High gold per game' },
+  'Resource Hungry': { icon: '🐷', color: 'orange', desc: 'Takes all the farm' },
+
+  // Consistency
+  'Consistent': { icon: '📊', color: 'blue', desc: 'Reliable performance' },
+  'Volatile': { icon: '🎢', color: 'orange', desc: 'Feast or famine player' },
+  'Clutch': { icon: '⭐', color: 'amber', desc: 'Performs in key moments' },
+
+  // Role-based
+  'Lane Bully': { icon: '👊', color: 'red', desc: 'Dominates early game' },
+  'Late Game Monster': { icon: '🐉', color: 'purple', desc: 'Scales hard' },
+  'Objective Focused': { icon: '🏰', color: 'blue', desc: 'Plays for objectives' },
+
+  // Fun/Personality
+  'One Trick': { icon: '🎪', color: 'purple', desc: 'Plays one champion a lot' },
+  'Flex Player': { icon: '🔄', color: 'cyan', desc: 'Plays many roles' },
+  'Early Bird': { icon: '🐦', color: 'yellow', desc: 'Gets first bloods' },
+  'Survivor': { icon: '🏃', color: 'emerald', desc: 'Rarely dies' },
+  'Aggro': { icon: '😤', color: 'red', desc: 'Aggressive playstyle' },
+  'Calculated': { icon: '🧠', color: 'cyan', desc: 'Smart, safe plays' },
+  'Glass Cannon': { icon: '🔮', color: 'purple', desc: 'High damage but squishy' },
+  'Rock Solid': { icon: '🪨', color: 'slate', desc: 'Dependable every game' },
 };
 
 function generatePlayerTags(name, stats) {
   const s = stats;
-  if (s.games < 2) return [];
+  if (s.games < 3) return [];
 
-  const tags = [];
+  const priorityTags = [];
+  const normalTags = [];
+  const lowPriorityTags = [];
+
+  // Calculate averages
   const kda = (s.kills + s.assists) / Math.max(s.deaths, 1);
+  const avgKills = s.kills / s.games;
   const avgDeaths = s.deaths / s.games;
   const avgAssists = s.assists / s.games;
   const winRate = s.wins / s.games;
   const avgKP = s.totalKP / s.games;
   const avgDmgShare = s.totalDmgShare / s.games;
   const avgVision = s.vision / s.games;
+  const avgDamage = s.damage / s.games;
+  const avgDamageTaken = s.damageTaken / s.games;
+  const avgCS = s.cs / s.games;
+  const avgGold = s.gold / s.games;
+  const avgHealShield = (s.healing + s.shielding) / s.games;
+  const avgCC = s.cc / s.games;
+  const avgSoloKills = s.soloKills / s.games;
+  const avgGameTime = s.totalTime / s.games / 60; // in minutes
+  const csPerMin = avgGameTime > 0 ? avgCS / avgGameTime : 0;
 
-  if (kda >= 4) tags.push('KDA Demon');
-  else if (kda >= 3) tags.push('Clean Player');
-  else if (kda < 1.5) tags.push('Death Prone');
+  // === PRIORITY TAGS (most impressive/defining) ===
 
-  if (winRate >= 0.6) tags.push('Winner');
-  else if (winRate >= 0.55) tags.push('Climbing');
-  else if (winRate < 0.4) tags.push('Struggling');
+  // Win rate tags (high priority)
+  if (winRate >= 0.65) priorityTags.push('Winner');
+  else if (winRate >= 0.58) priorityTags.push('Climbing');
 
-  if (avgDeaths < 3) tags.push('Survivor');
-  if (avgAssists >= 12) tags.push('Team Player');
-  if (avgDmgShare >= 0.3) tags.push('Carry Potential');
-  if (avgKP >= 0.65) tags.push('Always Involved');
-  if (avgVision >= 50) tags.push('Vision God');
-  if (s.pentas > 0) tags.push('Pentakill Legend');
-  if (s.damageTaken / s.games > 25000) tags.push('Frontliner');
-  if ((s.healing + s.shielding) / s.games > 5000) tags.push('Guardian');
+  // KDA excellence
+  if (kda >= 5) priorityTags.push('KDA Demon');
+  else if (kda >= 3.5) priorityTags.push('Clean Player');
 
-  return tags.slice(0, 3).map(label => ({ label, ...TAG_DEFINITIONS[label] })).filter(t => t.icon);
+  // Kill participation
+  if (avgKP >= 0.75) priorityTags.push('Always Involved');
+  else if (avgKP >= 0.68) priorityTags.push('Playmaker');
+
+  // === NORMAL TAGS ===
+
+  // Damage output
+  if (avgDmgShare >= 0.32) normalTags.push('Carry Potential');
+  if (avgDamage >= 28000) normalTags.push('Nuke');
+  else if (avgDamage >= 22000) normalTags.push('Poke Lord');
+
+  // Kills
+  if (avgKills >= 10) normalTags.push('Slayer');
+  if (avgSoloKills >= 3) normalTags.push('Assassin');
+
+  // Assists/Support
+  if (avgAssists >= 14) normalTags.push('Team Player');
+  else if (avgAssists >= 10 && avgAssists > avgKills * 1.5) normalTags.push('Setup King');
+
+  // Deaths/Survival
+  if (avgDeaths <= 2.5 && s.games >= 5) normalTags.push('Unkillable');
+  else if (avgDeaths <= 3.5) normalTags.push('Survivor');
+  if (kda < 1.3 && avgDeaths >= 7) normalTags.push('Death Prone');
+
+  // Vision
+  if (avgVision >= 55) normalTags.push('Vision God');
+  else if (avgVision >= 38) normalTags.push('Hawk Eye');
+  if (avgVision < 12 && s.games >= 5) normalTags.push('Blind');
+
+  // Frontline/Tank
+  if (avgDamageTaken >= 35000) normalTags.push('Raid Boss');
+  else if (avgDamageTaken >= 28000) normalTags.push('Frontliner');
+  else if (avgDamageTaken >= 22000 && avgDeaths >= 5) normalTags.push('Meat Shield');
+
+  // Support/Utility
+  if (avgHealShield >= 8000) normalTags.push('Guardian');
+  else if (avgHealShield >= 5000) normalTags.push('Protector');
+  if (avgCC >= 50) normalTags.push('CC Bot');
+
+  // Farm/Economy
+  if (csPerMin >= 8) normalTags.push('Farm God');
+  else if (csPerMin >= 7) normalTags.push('Resource Hungry');
+  if (avgGold >= 14000) normalTags.push('Gold Efficient');
+
+  // Playstyle
+  if (avgKills >= 7 && avgDeaths >= 6) normalTags.push('Aggro');
+  if (kda >= 3 && avgDeaths <= 3) normalTags.push('Calculated');
+  if (avgDamage >= 20000 && avgDamageTaken < 15000) normalTags.push('Glass Cannon');
+  if (winRate >= 0.48 && winRate <= 0.52 && s.games >= 10) normalTags.push('Coin Flip');
+
+  // First bloods
+  if (s.firstBloods >= s.games * 0.2 && s.games >= 5) normalTags.push('Early Bird');
+
+  // Champion pool
+  const champCount = Object.keys(s.champions || {}).length;
+  const topChampGames = Math.max(...Object.values(s.champions || {}).map(c => c.games), 0);
+  if (topChampGames >= s.games * 0.5 && s.games >= 5) normalTags.push('One Trick');
+  else if (champCount >= 8 && s.games >= 10) normalTags.push('Flex Player');
+
+  // Role distribution
+  const roleCount = Object.keys(s.roles || {}).length;
+  if (roleCount >= 4 && s.games >= 8) lowPriorityTags.push('Flex Player');
+
+  // Consistency
+  if (kda >= 2.5 && winRate >= 0.48 && winRate <= 0.55 && avgKP >= 0.55) normalTags.push('Rock Solid');
+
+  // === LOW PRIORITY / NEGATIVE TAGS ===
+  if (winRate < 0.38 && s.games >= 5) lowPriorityTags.push('Struggling');
+
+  // Combine and dedupe
+  const allTags = [...priorityTags, ...normalTags, ...lowPriorityTags];
+  const seen = new Set();
+  const uniqueTags = allTags.filter(t => {
+    if (seen.has(t)) return false;
+    seen.add(t);
+    return true;
+  });
+
+  return uniqueTags.slice(0, 4).map(label => ({ label, ...TAG_DEFINITIONS[label] })).filter(t => t.icon);
 }
 
 // ============================================================================
