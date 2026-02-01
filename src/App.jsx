@@ -40,7 +40,7 @@ const ROLE_SHORT = { TOP: "TOP", JUNGLE: "JNG", MIDDLE: "MID", BOTTOM: "ADC", UT
 const formatDuration = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 const formatNumber = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toString();
 
-const TAG_COLORS = {
+const TAG_COLORS_DARK = {
   amber: 'bg-amber-900 border-amber-600 text-amber-200',
   red: 'bg-red-900 border-red-600 text-red-200',
   emerald: 'bg-emerald-900 border-emerald-600 text-emerald-200',
@@ -51,6 +51,51 @@ const TAG_COLORS = {
   orange: 'bg-orange-900 border-orange-600 text-orange-200',
   yellow: 'bg-yellow-900 border-yellow-600 text-yellow-200',
   slate: 'bg-slate-800 border-slate-600 text-slate-300',
+};
+
+const TAG_COLORS_LIGHT = {
+  amber: 'bg-amber-100 border-amber-400 text-amber-800',
+  red: 'bg-red-100 border-red-400 text-red-800',
+  emerald: 'bg-emerald-100 border-emerald-400 text-emerald-800',
+  blue: 'bg-blue-100 border-blue-400 text-blue-800',
+  purple: 'bg-purple-100 border-purple-400 text-purple-800',
+  cyan: 'bg-cyan-100 border-cyan-400 text-cyan-800',
+  pink: 'bg-pink-100 border-pink-400 text-pink-800',
+  orange: 'bg-orange-100 border-orange-400 text-orange-800',
+  yellow: 'bg-yellow-100 border-yellow-400 text-yellow-800',
+  slate: 'bg-slate-200 border-slate-400 text-slate-700',
+};
+
+// Theme context for sharing across components
+const ThemeContext = React.createContext('dark');
+
+const MATCH_TAG_DEFINITIONS = {
+  'MVP': 'Best KDA (2.5+) with 25%+ kill participation',
+  'PENTAKILL': 'Got all 5 kills in a team fight',
+  'Quadra': 'Got 4 kills in quick succession',
+  'Triple': 'Got 3 kills in quick succession',
+  'Perfect': 'Zero deaths with 5+ kills/assists',
+  'Kill Leader': 'Most kills on the team (8+)',
+  'Damage Carry': 'Dealt 35%+ of the team\'s damage',
+  'Frontline': 'Absorbed 40k+ damage for the team',
+  'Vision King': 'Highest vision score (50+)',
+  'Farm God': '8+ CS per minute',
+  'Assist King': '15+ assists',
+  'CC Machine': '60+ seconds of crowd control',
+  'Guardian': '10k+ healing/shielding on teammates',
+  'Duelist': '5+ solo kills (1v1 wins)',
+  'Unstoppable': '7+ kill streak without dying',
+  'Comeback': 'Won after enemy exposed the nexus',
+  'Stomp': 'Dominant win under 25 min with 30+ kills',
+  'Marathon': 'Game lasted 35+ minutes',
+  'FF@15': 'Enemy team surrendered',
+  'Rough Game': '10+ deaths (no redeeming stats)',
+  'Struggle Bus': '8+ deaths with 2 or fewer kills',
+  'Oops': 'Very rough game (KDA under 0.5)',
+  'First Blood': 'Got the first kill of the game',
+  'FULL BOYS': 'All 5 boys playing together',
+  '4-Stack': '4 boys playing together',
+  'Solo Queue': 'Playing alone',
 };
 
 // ============================================================================
@@ -228,7 +273,8 @@ const TAG_DEFINITIONS = {
 
   // Fun/Personality
   'One Trick': { icon: '🎪', color: 'purple', desc: 'Plays one champion a lot' },
-  'Flex Player': { icon: '🔄', color: 'cyan', desc: 'Plays many roles' },
+  'Champion Ocean': { icon: '🌊', color: 'blue', desc: 'Plays 15+ different champions' },
+  'Flex Player': { icon: '🔄', color: 'cyan', desc: 'Plays 3+ roles regularly' },
   'Early Bird': { icon: '🐦', color: 'yellow', desc: 'Gets first bloods' },
   'Survivor': { icon: '🏃', color: 'emerald', desc: 'Rarely dies' },
   'Aggro': { icon: '😤', color: 'red', desc: 'Aggressive playstyle' },
@@ -331,11 +377,14 @@ function generatePlayerTags(name, stats) {
   const champCount = Object.keys(s.champions || {}).length;
   const topChampGames = Math.max(...Object.values(s.champions || {}).map(c => c.games), 0);
   if (topChampGames >= s.games * 0.5 && s.games >= 5) normalTags.push('One Trick');
-  else if (champCount >= 8 && s.games >= 10) normalTags.push('Flex Player');
+  else if (champCount >= 15 && s.games >= 20) normalTags.push('Champion Ocean');
 
-  // Role distribution
-  const roleCount = Object.keys(s.roles || {}).length;
-  if (roleCount >= 4 && s.games >= 8) lowPriorityTags.push('Flex Player');
+  // Role distribution - Flex Player requires actually playing multiple roles significantly (15%+ each)
+  const roleEntries = Object.entries(s.roles || {});
+  const rolesWithSignificantGames = roleEntries.filter(([, games]) => games >= s.games * 0.15);
+  if (rolesWithSignificantGames.length >= 3 && s.games >= 20) {
+    normalTags.push('Flex Player');
+  }
 
   // Consistency
   if (kda >= 2.5 && winRate >= 0.48 && winRate <= 0.55 && avgKP >= 0.55) normalTags.push('Rock Solid');
@@ -560,8 +609,8 @@ function generateMatchInsights(match) {
     }
   });
 
-  // Squad size tags (low priority)
-  if (boys.length === 5) lowPriorityTags.push({ label: 'Full Squad', color: 'amber', icon: '👥' });
+  // Squad size tags
+  if (boys.length === 5) priorityTags.push({ label: 'FULL BOYS', color: 'amber', icon: '👥' });
   else if (boys.length === 4) lowPriorityTags.push({ label: '4-Stack', color: 'blue', icon: '👥' });
   else if (boys.length === 1) lowPriorityTags.push({ label: 'Solo Queue', color: 'slate', icon: '🎮' });
 
@@ -588,6 +637,8 @@ function generateMatchInsights(match) {
 
 function Tooltip({ children, text }) {
   const [show, setShow] = useState(false);
+  const theme = React.useContext(ThemeContext);
+  const isDark = theme === 'dark';
 
   return (
     <div className="relative inline-block">
@@ -595,7 +646,7 @@ function Tooltip({ children, text }) {
         {children}
       </div>
       {show && (
-        <div className="absolute z-50 bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-slate-800 border-2 border-slate-600 rounded-lg text-sm text-white whitespace-nowrap shadow-xl">
+        <div className={`absolute z-50 bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 border-2 rounded-lg text-sm whitespace-nowrap shadow-xl ${isDark ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
           {text}
         </div>
       )}
@@ -609,6 +660,9 @@ function Tooltip({ children, text }) {
 
 function MatchCard({ match }) {
   const [expanded, setExpanded] = useState(false);
+  const theme = React.useContext(ThemeContext);
+  const isDark = theme === 'dark';
+  const TAG_COLORS = isDark ? TAG_COLORS_DARK : TAG_COLORS_LIGHT;
   const { tags } = useMemo(() => generateMatchInsights(match), [match]);
   const boys = match.participants.filter(p => p.isBoy);
   const isARAM = match.queueId === 450;
@@ -621,28 +675,30 @@ function MatchCard({ match }) {
   const enemyTeam = match.participants.filter(p => p.teamId !== teamId);
 
   return (
-    <div className={`rounded-2xl border-2 ${didWin ? 'bg-emerald-950 border-emerald-700' : 'bg-red-950 border-red-800'}`}>
+    <div className={`rounded-2xl border-2 ${didWin ? (isDark ? 'bg-emerald-950 border-emerald-700' : 'bg-emerald-50 border-emerald-400') : (isDark ? 'bg-red-950 border-red-800' : 'bg-red-50 border-red-400')}`}>
       <div className="p-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
-            <div className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center font-black ${didWin ? 'bg-emerald-600' : 'bg-red-600'}`}>
+            <div className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center font-black text-white ${didWin ? 'bg-emerald-600' : 'bg-red-600'}`}>
               <span className="text-lg">{didWin ? 'W' : 'L'}</span>
               <span className="text-xs opacity-80">{formatDuration(match.gameDuration)}</span>
             </div>
             <div>
-              <div className="font-bold text-white text-lg">{QUEUE_NAMES[match.queueId] || match.gameMode}</div>
-              <div className="text-slate-400 text-sm">{new Date(match.gameCreation).toLocaleDateString()}</div>
+              <div className={`font-bold text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>{QUEUE_NAMES[match.queueId] || match.gameMode}</div>
+              <div className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{new Date(match.gameCreation).toLocaleDateString()}</div>
             </div>
           </div>
-          <div className="text-2xl text-slate-400">{expanded ? '▼' : '▶'}</div>
+          <div className={`text-2xl ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{expanded ? '▼' : '▶'}</div>
         </div>
 
         {tags.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
             {tags.map((t, i) => (
-              <span key={i} className={`px-2 py-1 rounded text-xs font-bold border ${TAG_COLORS[t.color]}`}>
-                {t.icon} {t.label}{t.player ? ` (${t.player})` : ''}
-              </span>
+              <Tooltip key={i} text={MATCH_TAG_DEFINITIONS[t.label] || t.label}>
+                <span className={`px-2 py-1 rounded text-xs font-bold border ${TAG_COLORS[t.color]}`}>
+                  {t.icon} {t.label}{t.player ? ` (${t.player})` : ''}
+                </span>
+              </Tooltip>
             ))}
           </div>
         )}
@@ -657,8 +713,8 @@ function MatchCard({ match }) {
                 style={{ background: `${color}20`, borderColor: `${color}60` }}>
                 <span>{emoji}</span>
                 <span className="font-bold" style={{ color }}>{name}</span>
-                <span className="text-slate-300">{p.championName}</span>
-                <span className="font-mono text-white">{p.kills}/{p.deaths}/{p.assists}</span>
+                <span className={isDark ? 'text-slate-300' : 'text-slate-600'}>{p.championName}</span>
+                <span className={`font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>{p.kills}/{p.deaths}/{p.assists}</span>
               </div>
             );
           })}
@@ -1128,6 +1184,20 @@ export default function BoyStats() {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [backups, setBackups] = useState([]);
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('boystats-theme') || 'dark';
+    }
+    return 'dark';
+  });
+
+  // Persist theme to localStorage
+  useEffect(() => {
+    localStorage.setItem('boystats-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  const isDark = theme === 'dark';
 
   const [selectedPlayers, setSelectedPlayers] = useState(THE_BOYS.map(b => b.gameName));
   const [queueFilter, setQueueFilter] = useState(new Set(['420', '440', '400'])); // Solo, Flex, Normal by default
@@ -1480,19 +1550,20 @@ export default function BoyStats() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <ThemeContext.Provider value={theme}>
+    <div className={`min-h-screen transition-colors ${isDark ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-900'}`}>
       {/* Refresh progress bar */}
       {refreshing && (
-        <div className="fixed top-0 left-0 right-0 z-[100] bg-slate-900 border-b border-emerald-700">
+        <div className={`fixed top-0 left-0 right-0 z-[100] border-b border-emerald-700 ${isDark ? 'bg-slate-900' : 'bg-white'}`}>
           <div className="max-w-7xl mx-auto px-4 py-2">
             <div className="flex items-center gap-3">
               <div className="animate-spin text-lg">🔄</div>
               <div className="flex-1">
                 <p className="text-emerald-400 text-sm font-bold">{loadingMessage}</p>
-                <p className="text-slate-400 text-xs">{loadingSubMessage}</p>
+                <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{loadingSubMessage}</p>
               </div>
               <div className="w-32">
-                <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                <div className={`w-full rounded-full h-2 overflow-hidden ${isDark ? 'bg-slate-700' : 'bg-slate-300'}`}>
                   <div
                     className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${Math.min(loadingProgress, 100)}%` }}
@@ -1503,7 +1574,7 @@ export default function BoyStats() {
           </div>
         </div>
       )}
-      <header className={`border-b-2 border-slate-800 bg-slate-900 sticky top-0 z-50 ${refreshing ? 'mt-12' : ''}`}>
+      <header className={`border-b-2 sticky top-0 z-50 ${refreshing ? 'mt-12' : ''} ${isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-300 bg-white'}`}>
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">
@@ -1545,31 +1616,42 @@ export default function BoyStats() {
                 </div>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               {['dashboard', 'matches', 'players', 'ask'].map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2 rounded-xl font-bold text-sm ${activeTab === tab ? (tab === 'ask' ? 'bg-purple-500 text-white' : 'bg-amber-500 text-black') : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-2 border-slate-700'}`}>
+                  className={`px-4 py-2 rounded-xl font-bold text-sm ${activeTab === tab ? (tab === 'ask' ? 'bg-purple-500 text-white' : 'bg-amber-500 text-black') : isDark ? 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-2 border-slate-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300 border-2 border-slate-300'}`}>
                   {tab === 'ask' ? '🤖 Ask AI' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
+              <button
+                onClick={toggleTheme}
+                className={`px-3 py-2 rounded-xl font-bold text-sm border-2 transition-all ${
+                  isDark
+                    ? 'bg-slate-800 border-slate-600 text-yellow-400 hover:bg-slate-700'
+                    : 'bg-slate-200 border-slate-300 text-slate-700 hover:bg-slate-300'
+                }`}
+                title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {isDark ? '☀️' : '🌙'}
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="border-b-2 border-slate-800 bg-slate-900">
+      <div className={`border-b-2 ${isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-300 bg-white'}`}>
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             <div className="col-span-2 md:col-span-4 lg:col-span-2">
-              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Players</label>
+              <label className={`text-xs font-bold uppercase block mb-2 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>Players</label>
               <div className="flex flex-wrap gap-2">
                 {THE_BOYS.map(boy => {
                   const color = PLAYER_COLORS[boy.gameName];
                   const sel = selectedPlayers.includes(boy.gameName);
                   return (
                     <button key={boy.gameName} onClick={() => togglePlayer(boy.gameName)}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-bold border-2 ${sel ? 'border-white shadow-lg' : 'border-slate-600 opacity-60 hover:opacity-100'}`}
-                      style={{ background: sel ? color : '#1e293b', color: sel ? '#000' : color }}>
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-bold border-2 ${sel ? 'border-white shadow-lg' : isDark ? 'border-slate-600 opacity-60 hover:opacity-100' : 'border-slate-400 opacity-60 hover:opacity-100'}`}
+                      style={{ background: sel ? color : (isDark ? '#1e293b' : '#e2e8f0'), color: sel ? '#000' : color }}>
                       <span>{boy.emoji}</span>
                       <span className="hidden sm:inline">{boy.gameName}</span>
                     </button>
@@ -1579,9 +1661,9 @@ export default function BoyStats() {
             </div>
 
             <div>
-              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Time</label>
+              <label className={`text-xs font-bold uppercase block mb-2 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>Time</label>
               <select value={timeFilter} onChange={e => setTimeFilter(e.target.value)}
-                className="w-full bg-slate-800 border-2 border-slate-600 rounded-lg px-3 py-2 text-white">
+                className={`w-full border-2 rounded-lg px-3 py-2 ${isDark ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
                 <option value="all">All Time</option>
                 <option value="7">7 Days</option>
                 <option value="14">14 Days</option>
@@ -1590,7 +1672,7 @@ export default function BoyStats() {
             </div>
 
             <div>
-              <label className="text-xs text-amber-400 font-bold uppercase block mb-2">Queue</label>
+              <label className={`text-xs font-bold uppercase block mb-2 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>Queue</label>
               <div className="flex flex-wrap gap-1">
                 {[
                   { id: '420', label: 'Solo' },
@@ -1599,7 +1681,7 @@ export default function BoyStats() {
                   { id: '450', label: 'ARAM' },
                 ].map(q => (
                   <button key={q.id} onClick={() => toggleQueue(q.id)}
-                    className={`px-2 py-2 rounded-lg text-xs font-bold border-2 transition-all ${queueFilter.has(q.id) ? 'bg-amber-500 border-amber-400 text-black' : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500'
+                    className={`px-2 py-2 rounded-lg text-xs font-bold border-2 transition-all ${queueFilter.has(q.id) ? 'bg-amber-500 border-amber-400 text-black' : isDark ? 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500' : 'bg-slate-100 border-slate-300 text-slate-600 hover:border-slate-400'
                       }`}>
                     {q.label}
                   </button>
@@ -1876,12 +1958,13 @@ export default function BoyStats() {
         </div>
       )}
 
-      <footer className="border-t-2 border-slate-800 mt-6">
+      <footer className={`border-t-2 mt-6 ${isDark ? 'border-slate-800' : 'border-slate-300'}`}>
         <div className="max-w-7xl mx-auto px-4 py-6 text-center">
-          <p className="text-amber-400 font-bold">🎮 BOYSTATS</p>
-          <p className="text-xs text-slate-500 mt-1">Built for The Boys • Powered by Riot Games API</p>
+          <p className={`font-bold ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>🎮 BOYSTATS</p>
+          <p className={`text-xs mt-1 ${isDark ? 'text-slate-500' : 'text-slate-600'}`}>Built for The Boys • Powered by Riot Games API</p>
         </div>
       </footer>
     </div>
+    </ThemeContext.Provider>
   );
 }
